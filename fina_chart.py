@@ -1,0 +1,608 @@
+"""ローソク足チャートを表示する(チャート表示の基本プログラム)。
+
+stock_database フォルダの日足データ(fina_gather.py で取得)を読み込み、
+ローソク足と出来高を表示する。陽線は緑、陰線は赤で描く。
+
+使い方:
+    python fina_chart.py 7203    # 7203.T のチャートを表示
+    python fina_chart.py         # 起動後に画面で銘柄コードを入力
+
+操作:
+    銘柄の変更      銘柄欄にコードを入力して Enter(または「表示」ボタン)
+    足の変更        日足 / 週足 / 月足 ボタン
+    スクロール      チャートの何もない所を左右にドラッグ、または下のスクロールバー
+    拡大・縮小      マウスホイール
+    図形の追加      図形のボタンを選んでチャートをクリック
+                    水平線・垂直線      1 回クリック
+                    トレンドライン・矩形 始点と終点の 2 回クリック
+                    平行チャンネル      基準線の始点・終点、平行線の位置の 3 回クリック
+                    パス                点を順にクリックし、ダブルクリック・Enter・右クリックで確定
+                                        (終点に矢印が付く)
+    作図の取り消し  Esc(パス以外は右クリックでも可)
+    図形の選択      カーソルモードで図形をクリック(点の印が付く)
+    図形の移動      カーソルモードで図形をドラッグ
+    図形の色        色のボタンを押すと、選択中の図形とこれから描く図形の色が変わる
+    図形の削除      図形を右クリック、または選択して Delete。「全消去」ですべて削除
+
+他のプログラムからは、ChartFrame を tkinter の部品として組み込める。
+"""
+
+import math
+import sys
+import tkinter as tk
+from tkinter import colorchooser, messagebox, ttk
+
+import pandas as pd
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.collections import LineCollection, PolyCollection
+from matplotlib.colors import to_rgba
+from matplotlib.figure import Figure
+from matplotlib.patches import FancyArrowPatch, Polygon, Rectangle
+from matplotlib.path import Path as MplPath
+from matplotlib.ticker import FuncFormatter, MaxNLocator
+
+from fina_gather import csv_path_for, latest_listed_stocks_csv, load_saved
+
+UP_COLOR = "#26a69a"    # 陽線(緑)
+DOWN_COLOR = "#ef5350"  # 陰線(赤)
+# 図形の色の候補。先頭が最初の色
+DRAW_COLORS = ["#2962ff", "#f23645", "#089981", "#ff9800", "#9c27b0", "#131722"]
+
+# 表示名 -> (pandas の期間、日付の書式)
+TIMEFRAMES = {
+    "日足": (None, "%Y/%m/%d"),
+    "週足": ("W", "%Y/%m/%d"),
+    "月足": ("M", "%Y/%m"),
+}
+# 表示名 -> 図形の種類
+TOOLS = {
+    "カーソル": "cursor",
+    "水平線": "hline",
+    "垂直線": "vline",
+    "トレンドライン": "trend",
+    "矩形": "rect",
+    "平行チャンネル": "channel",
+    "パス": "path",
+}
+# 図形を決めるのに必要なクリック数(パスは確定操作まで何点でも)
+POINTS_NEEDED = {"hline": 1, "vline": 1, "trend": 2, "rect": 2, "channel": 3, "path": None}
+MIN_PATH_POINTS = 2
+
+INITIAL_BARS = 120   # 最初に表示する足の本数
+MIN_BARS = 10        # 拡大したときの最小本数
+LEFT_MARGIN = 1      # 左端の余白(足の本数)
+RIGHT_MARGIN = 4     # 右端の余白(足の本数)
+BODY_HALF_WIDTH = 0.35
+PICK_PIXELS = 6      # 図形をクリックで選ぶときの許容距離
+LINE_WIDTH = 1.4
+
+
+def resample(daily: pd.DataFrame, rule: str | None) -> pd.DataFrame:
+    """日足を週足("W")や月足("M")にまとめる。日付は期間の最初の取引日。"""
+    if rule is None:
+        return daily
+    grouped = daily.assign(Date=daily.index).groupby(daily.index.to_period(rule))
+    return grouped.agg(
+        {"Date": "first", "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
+    ).set_index("Date")
+
+
+def load_stock_names() -> dict[str, str]:
+    """最新の銘柄一覧から、コード -> 銘柄名 の辞書を作る。"""
+    try:
+        listed = pd.read_csv(latest_listed_stocks_csv(), dtype=str, encoding="utf-8-sig")
+    except FileNotFoundError:
+        return {}
+    return dict(zip(listed["コード"], listed["銘柄名"]))
+
+
+def channel_lines(xy: list[tuple[float, float]]):
+    """平行チャンネルの 3 点から、基準線と平行線の両端を返す。
+
+    1・2 点目が基準線。平行線は基準線と同じ傾きで、3 点目を通る。
+    """
+    (x0, y0), (x1, y1), (x2, y2) = xy
+    base_at_x2 = y0 + (y1 - y0) * (x2 - x0) / (x1 - x0) if x1 != x0 else y0
+    offset = y2 - base_at_x2
+    return ((x0, y0), (x1, y1)), ((x0, y0 + offset), (x1, y1 + offset))
+
+
+def segment_distance(p, a, b) -> float:
+    """点 p から線分 ab までの距離。"""
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    dx, dy = bx - ax, by - ay
+    length2 = dx * dx + dy * dy
+    t = min(max(((px - ax) * dx + (py - ay) * dy) / length2, 0), 1) if length2 else 0
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+class ChartFrame(ttk.Frame):
+    """ローソク足チャートと操作用ツールバーをまとめた部品。"""
+
+    def __init__(self, master, code: str | None = None):
+        super().__init__(master)
+        self.names = load_stock_names()
+        self.code = None
+        self.daily = None   # 日足データ
+        self.bars = None    # 表示中の足(日足・週足・月足のいずれか)
+        # 図形は {"type": 種類, "points": [(日付, 価格), ...], "color": 色} の形で、銘柄ごとに保持する
+        self.drawings_by_code = {}
+        self.drawings = []
+        self.color = DRAW_COLORS[0]
+        self.pending = None   # 作図中の図形(確定した点だけを持つ)
+        self.preview = None   # 作図中、マウス位置にある次の点
+        self.selected = None  # 選択中の図形
+        self.drag = None      # 図形の移動中の情報
+        self.pan_start = None
+        self.candle_artists = []
+        self.drawing_artists = []
+
+        self._build_toolbar()
+        self._build_chart()
+        if code:
+            self.set_code(code)
+
+    # ---- 画面の組み立て ----
+
+    def _build_toolbar(self):
+        # 1 段目: 銘柄と足
+        bar = ttk.Frame(self)
+        bar.pack(side="top", fill="x", padx=4, pady=(4, 0))
+
+        ttk.Label(bar, text="銘柄").pack(side="left")
+        self.code_var = tk.StringVar()
+        entry = ttk.Entry(bar, textvariable=self.code_var, width=8)
+        entry.pack(side="left", padx=(4, 2))
+        entry.bind("<Return>", lambda e: self.set_code(self.code_var.get()))
+        ttk.Button(bar, text="表示", width=5, command=lambda: self.set_code(self.code_var.get())).pack(side="left")
+        self.name_var = tk.StringVar()
+        ttk.Label(bar, textvariable=self.name_var, width=24).pack(side="left", padx=8)
+
+        self.timeframe_var = tk.StringVar(value="日足")
+        for label in TIMEFRAMES:
+            ttk.Radiobutton(
+                bar, text=label, value=label, variable=self.timeframe_var,
+                style="Toolbutton", command=self._show_bars,
+            ).pack(side="left")
+
+        # 2 段目: 図形
+        bar = ttk.Frame(self)
+        bar.pack(side="top", fill="x", padx=4, pady=(4, 0))
+
+        self.tool_var = tk.StringVar(value="cursor")
+        for label, tool in TOOLS.items():
+            ttk.Radiobutton(
+                bar, text=label, value=tool, variable=self.tool_var,
+                style="Toolbutton", command=self._on_tool_change,
+            ).pack(side="left")
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+
+        ttk.Label(bar, text="色").pack(side="left", padx=(0, 4))
+        self.color_indicator = tk.Label(bar, width=3, bg=self.color, relief="sunken", bd=2)
+        self.color_indicator.pack(side="left", padx=(0, 6))
+        for color in DRAW_COLORS:
+            swatch = tk.Label(bar, width=2, bg=color, relief="raised", bd=1, cursor="hand2")
+            swatch.pack(side="left", padx=1)
+            swatch.bind("<Button-1>", lambda e, c=color: self.set_color(c))
+        ttk.Button(bar, text="…", width=3, command=self._choose_color).pack(side="left", padx=(4, 0))
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Button(bar, text="全消去", width=7, command=self.clear_drawings).pack(side="left")
+
+        # マウス位置の足の日付と OHLCV を表示する
+        self.info_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.info_var).pack(side="top", fill="x", padx=6, pady=2)
+
+    def _build_chart(self):
+        self.fig = Figure(figsize=(11, 6.5), dpi=100)
+        grid = self.fig.add_gridspec(2, 1, height_ratios=[4, 1], hspace=0.03)
+        self.ax = self.fig.add_subplot(grid[0])
+        self.ax_vol = self.fig.add_subplot(grid[1], sharex=self.ax)
+        self.fig.subplots_adjust(left=0.04, right=0.93, top=0.98, bottom=0.06)
+        for ax in (self.ax, self.ax_vol):
+            ax.yaxis.tick_right()
+            ax.grid(True, color="#e6e6e6", linewidth=0.6)
+            ax.set_axisbelow(True)
+            ax.autoscale(False)
+        self.ax.tick_params(labelbottom=False)
+        # 横軸は足の番号。休日の隙間を作らないため、日付ではなく番号で並べる
+        self.ax_vol.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
+        self.ax_vol.xaxis.set_major_formatter(FuncFormatter(self._format_date))
+        self.ax_vol.yaxis.set_major_locator(MaxNLocator(nbins=3))
+        self.ax_vol.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v / 1e6:g}M"))
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self)
+        self.scrollbar = ttk.Scrollbar(self, orient="horizontal", command=self._on_scrollbar)
+        self.scrollbar.pack(side="bottom", fill="x")
+        widget = self.canvas.get_tk_widget()
+        widget.pack(side="top", fill="both", expand=True)
+        widget.bind("<Escape>", lambda e: self._on_escape())
+        widget.bind("<Return>", lambda e: self._finish_pending())
+        widget.bind("<Delete>", lambda e: self.delete_selected())
+
+        self.canvas.mpl_connect("button_press_event", self._on_press)
+        self.canvas.mpl_connect("button_release_event", self._on_release)
+        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self.canvas.mpl_connect("scroll_event", self._on_scroll)
+
+    # ---- 銘柄と足の切り替え ----
+
+    def set_code(self, code: str) -> None:
+        """表示する銘柄を変える。"""
+        code = code.strip().upper().removesuffix(".T")
+        if not code:
+            return
+        daily = load_saved(csv_path_for(code))
+        if daily is None:
+            messagebox.showerror(
+                "fina_chart",
+                f"{code} のデータがありません。\n先に python fina_gather.py {code} を実行してください。",
+                parent=self,
+            )
+            return
+        self.code = code
+        self.daily = daily.dropna()
+        self.code_var.set(code)
+        self.name_var.set(self.names.get(code, ""))
+        self.drawings = self.drawings_by_code.setdefault(code, [])
+        self.selected = None
+        self._show_bars()
+
+    def _show_bars(self):
+        """選択中の足(日足・週足・月足)で描き直し、直近の足が見える位置に合わせる。"""
+        if self.daily is None:
+            return
+        self.pending = self.preview = self.drag = None
+        self.bars = resample(self.daily, TIMEFRAMES[self.timeframe_var.get()][0])
+        self._draw_candles()
+        self._render_drawings()
+        right = len(self.bars) + RIGHT_MARGIN
+        self._set_view(right - INITIAL_BARS, right)
+
+    def _draw_candles(self):
+        for artist in self.candle_artists:
+            artist.remove()
+        b = self.bars
+        w = BODY_HALF_WIDTH
+        colors = [UP_COLOR if c >= o else DOWN_COLOR for o, c in zip(b["Open"], b["Close"])]
+        wicks = [((i, lo), (i, hi)) for i, (lo, hi) in enumerate(zip(b["Low"], b["High"]))]
+        bodies = [
+            ((i - w, o), (i - w, c), (i + w, c), (i + w, o))
+            for i, (o, c) in enumerate(zip(b["Open"], b["Close"]))
+        ]
+        volumes = [((i - w, 0), (i - w, v), (i + w, v), (i + w, 0)) for i, v in enumerate(b["Volume"])]
+        self.candle_artists = [
+            self.ax.add_collection(LineCollection(wicks, colors=colors, linewidths=0.8)),
+            # 始値と終値が同じ足も線として見えるよう、枠線を付ける
+            self.ax.add_collection(PolyCollection(bodies, facecolors=colors, edgecolors=colors, linewidths=0.6)),
+            self.ax_vol.add_collection(PolyCollection(volumes, facecolors=colors, edgecolors=colors, linewidths=0.6)),
+        ]
+
+    # ---- 表示範囲(スクロールと拡大・縮小) ----
+
+    def _set_view(self, lo: float, hi: float) -> None:
+        """横軸の表示範囲を決め、見えている足に合わせて縦軸を調整する。"""
+        xmin, xmax = -LEFT_MARGIN, len(self.bars) + RIGHT_MARGIN
+        width = min(max(hi - lo, MIN_BARS), xmax - xmin)
+        lo = min(max(lo, xmin), xmax - width)
+        hi = lo + width
+        self.ax.set_xlim(lo, hi)
+
+        visible = self.bars.iloc[max(math.ceil(lo), 0): max(math.floor(hi) + 1, 0)]
+        if not visible.empty:
+            low, high = visible["Low"].min(), visible["High"].max()
+            pad = (high - low) * 0.05 or high * 0.01 or 1
+            self.ax.set_ylim(low - pad, high + pad)
+            self.ax_vol.set_ylim(0, max(visible["Volume"].max(), 1) * 1.1)
+
+        self.scrollbar.set((lo - xmin) / (xmax - xmin), (hi - xmin) / (xmax - xmin))
+        self.canvas.draw_idle()
+
+    def _on_scrollbar(self, action, value, unit=None):
+        if self.bars is None:
+            return
+        lo, hi = self.ax.get_xlim()
+        width = hi - lo
+        if action == "moveto":
+            lo = float(value) * (len(self.bars) + LEFT_MARGIN + RIGHT_MARGIN) - LEFT_MARGIN
+        else:
+            lo += int(value) * width * (0.9 if unit == "pages" else 0.1)
+        self._set_view(lo, lo + width)
+
+    def _on_scroll(self, event):
+        """マウスホイールで、マウス位置を中心に拡大・縮小する。"""
+        if self.bars is None:
+            return
+        lo, hi = self.ax.get_xlim()
+        scale = 0.8 if event.button == "up" else 1.25
+        anchor = event.xdata if event.xdata is not None else hi
+        self._set_view(anchor - (anchor - lo) * scale, anchor + (hi - anchor) * scale)
+
+    def _format_date(self, x, _pos):
+        i = round(x)
+        if self.bars is None or not 0 <= i < len(self.bars):
+            return ""
+        return self.bars.index[i].strftime(TIMEFRAMES[self.timeframe_var.get()][1])
+
+    # ---- マウスとキーの操作 ----
+
+    def _on_press(self, event):
+        self.canvas.get_tk_widget().focus_set()
+        if self.bars is None:
+            return
+        if event.button == 3:
+            self._on_right_click(event)
+        elif event.button == 1:
+            if self.tool_var.get() == "cursor":
+                self._on_cursor_press(event)
+            elif event.inaxes is self.ax:
+                self._on_draw_click(event)
+
+    def _on_right_click(self, event):
+        if self.pending:
+            # パスは右クリックで確定、それ以外は作図の取り消し
+            if self.pending["type"] == "path":
+                self._finish_pending()
+            else:
+                self._cancel_pending()
+            return
+        if event.inaxes is self.ax:
+            drawing = self._drawing_at(event.x, event.y)
+            if drawing:
+                self._remove_drawing(drawing)
+
+    def _on_cursor_press(self, event):
+        """カーソルモード: 図形の上なら選択して移動を始め、何もない所ならスクロールを始める。"""
+        drawing = self._drawing_at(event.x, event.y) if event.inaxes is self.ax else None
+        self.selected = drawing
+        if drawing:
+            self.drag = {
+                "drawing": drawing,
+                "start": self._data_at(event),
+                "points": [(self._x_of(d), p) for d, p in drawing["points"]],
+            }
+        else:
+            self.pan_start = (event.x, self.ax.get_xlim())
+        self._render_drawings()
+
+    def _on_draw_click(self, event):
+        tool = self.tool_var.get()
+        if self.pending is None:
+            self.pending = {"type": tool, "points": [], "color": self.color}
+        if tool == "path" and event.dblclick:
+            # ダブルクリックの 1 回目で点は追加済みなので、ここでは確定だけを行う
+            self._finish_pending()
+            return
+        self.pending["points"].append(self._snap(event))
+        self.preview = None
+        if len(self.pending["points"]) == POINTS_NEEDED[tool]:
+            self._finish_pending()
+        else:
+            self._render_drawings()
+
+    def _on_release(self, _event):
+        self.pan_start = None
+        self.drag = None
+
+    def _on_motion(self, event):
+        if self.bars is None:
+            return
+        if self.drag:
+            self._move_drawing(event)
+        elif self.pan_start:
+            press_x, (lo, hi) = self.pan_start
+            shift = (press_x - event.x) * (hi - lo) / self.ax.bbox.width
+            self._set_view(lo + shift, hi + shift)
+        elif self.pending and event.inaxes is self.ax:
+            # 作図中の図形を、マウス位置まで仮に描く
+            self.preview = self._snap(event)
+            self._render_drawings()
+        self._show_info(event)
+
+    def _on_escape(self):
+        if self.pending:
+            self._cancel_pending()
+        elif self.selected:
+            self.selected = None
+            self._render_drawings()
+
+    def _on_tool_change(self):
+        self._cancel_pending()
+
+    def _show_info(self, event):
+        if event.xdata is None:
+            return
+        i = round(event.xdata)
+        if not 0 <= i < len(self.bars):
+            return
+        bar = self.bars.iloc[i]
+        text = (
+            f"{self.bars.index[i]:%Y-%m-%d}   始 {bar['Open']:,.1f}   高 {bar['High']:,.1f}   "
+            f"安 {bar['Low']:,.1f}   終 {bar['Close']:,.1f}   出来高 {int(bar['Volume']):,}"
+        )
+        if event.inaxes is self.ax:
+            text += f"      カーソル {event.ydata:,.1f}"
+        self.info_var.set(text)
+
+    # ---- 座標の変換 ----
+
+    def _data_at(self, event) -> tuple[float, float]:
+        """マウス位置をチャートの座標(足の番号、価格)に直す。チャートの外でも使える。"""
+        return tuple(self.ax.transData.inverted().transform((event.x, event.y)))
+
+    def _snap(self, event) -> tuple[pd.Timestamp, float]:
+        """マウス位置を(一番近い足の日付、価格)に直す。"""
+        x, y = self._data_at(event)
+        i = min(max(round(x), 0), len(self.bars) - 1)
+        return self.bars.index[i], y
+
+    def _x_of(self, date: pd.Timestamp) -> int:
+        """日付を、表示中の足の番号に直す(週足・月足では、その日を含む足)。"""
+        return max(int(self.bars.index.searchsorted(date, side="right")) - 1, 0)
+
+    # ---- 図形の描画 ----
+
+    def _render_drawings(self):
+        for artist in self.drawing_artists:
+            artist.remove()
+        self.drawing_artists = []
+        for drawing in self.drawings:
+            self._render(drawing["type"], drawing["points"], drawing["color"])
+        if self.pending:
+            points = self.pending["points"] + ([self.preview] if self.preview else [])
+            self._render(self.pending["type"], points, self.pending["color"])
+        if self.selected is not None:
+            self._render_handles(self.selected)
+        self.canvas.draw_idle()
+
+    def _render(self, kind: str, points: list, color: str) -> None:
+        if not points:
+            return
+        xy = [(self._x_of(date), price) for date, price in points]
+        ax, add = self.ax, self.drawing_artists.append
+        line = {"color": color, "linewidth": LINE_WIDTH}
+        if kind == "hline":
+            add(ax.axhline(xy[0][1], **line))
+        elif kind == "vline":
+            add(ax.axvline(xy[0][0], **line))
+        elif len(xy) < 2:
+            return  # 残りの図形は 2 点以上で描く
+        elif kind == "rect":
+            (x0, y0), (x1, y1) = xy[0], xy[-1]
+            add(ax.add_patch(Rectangle(
+                (min(x0, x1), min(y0, y1)), abs(x1 - x0), abs(y1 - y0),
+                facecolor=to_rgba(color, 0.12), edgecolor=color, linewidth=LINE_WIDTH,
+            )))
+        elif kind == "channel" and len(xy) == 3:
+            base, parallel = channel_lines(xy)
+            add(ax.add_patch(Polygon(
+                [base[0], base[1], parallel[1], parallel[0]], facecolor=to_rgba(color, 0.12), edgecolor="none",
+            )))
+            for (x0, y0), (x1, y1) in (base, parallel):
+                add(ax.plot([x0, x1], [y0, y1], **line)[0])
+            # 中央線
+            mid = [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in zip(base, parallel)]
+            add(ax.plot([mid[0][0], mid[1][0]], [mid[0][1], mid[1][1]], color=color, linewidth=0.8, linestyle="--")[0])
+        elif kind == "path":
+            if len(xy) > 2:
+                add(ax.plot([x for x, _ in xy[:-1]], [y for _, y in xy[:-1]], **line)[0])
+            add(ax.add_patch(FancyArrowPatch(
+                xy[-2], xy[-1], arrowstyle="-|>", mutation_scale=16,
+                color=color, linewidth=LINE_WIDTH, shrinkA=0, shrinkB=0,
+            )))
+        else:
+            # トレンドライン(作図中の平行チャンネルも、基準線だけを描く)
+            add(ax.plot([xy[0][0], xy[1][0]], [xy[0][1], xy[1][1]], **line)[0])
+
+    def _render_handles(self, drawing: dict) -> None:
+        """選択中の図形の点に、白丸の印を付ける。"""
+        xy = [(self._x_of(date), price) for date, price in drawing["points"]]
+        (handles,) = self.ax.plot(
+            [x for x, _ in xy], [y for _, y in xy], "o", markersize=7,
+            markerfacecolor="white", markeredgecolor=drawing["color"], markeredgewidth=1.5, zorder=5,
+        )
+        self.drawing_artists.append(handles)
+
+    # ---- 図形の編集 ----
+
+    def _finish_pending(self):
+        """作図中の図形を確定する。点が足りなければ取り消す。"""
+        if not self.pending:
+            return
+        needed = POINTS_NEEDED[self.pending["type"]] or MIN_PATH_POINTS
+        if len(self.pending["points"]) >= needed:
+            self.drawings.append(self.pending)
+            self.selected = self.pending
+            self.tool_var.set("cursor")
+        self.pending = self.preview = None
+        self._render_drawings()
+
+    def _cancel_pending(self):
+        self.pending = self.preview = None
+        self._render_drawings()
+
+    def _move_drawing(self, event):
+        """ドラッグ量だけ図形を動かす。横方向は足の単位で動かし、チャートの外には出さない。"""
+        drag = self.drag
+        x, y = self._data_at(event)
+        dx = round(x - drag["start"][0])
+        dy = y - drag["start"][1]
+        xs = [i for i, _ in drag["points"]]
+        dx = min(max(dx, -min(xs)), len(self.bars) - 1 - max(xs))
+        drag["drawing"]["points"] = [(self.bars.index[i + dx], p + dy) for i, p in drag["points"]]
+        self._render_drawings()
+
+    def set_color(self, color: str) -> None:
+        """図形の色を変える。選択中の図形があれば、その色も変える。"""
+        self.color = color
+        self.color_indicator.configure(bg=color)
+        if self.selected:
+            self.selected["color"] = color
+            self._render_drawings()
+
+    def _choose_color(self):
+        _, color = colorchooser.askcolor(self.color, parent=self, title="図形の色")
+        if color:
+            self.set_color(color)
+
+    def _remove_drawing(self, drawing: dict) -> None:
+        # 同じ形の図形が複数あっても、この図形そのものを消す(== ではなく is で比べる)
+        self.drawings[:] = [d for d in self.drawings if d is not drawing]
+        if self.selected is drawing:
+            self.selected = None
+        self._render_drawings()
+
+    def delete_selected(self) -> None:
+        """選択中の図形を消す。"""
+        if self.selected is not None:
+            self._remove_drawing(self.selected)
+
+    def clear_drawings(self) -> None:
+        """表示中の銘柄の図形をすべて消す。"""
+        self.drawings.clear()
+        self.selected = None
+        self._cancel_pending()
+
+    # ---- 図形の当たり判定 ----
+
+    def _drawing_at(self, px: float, py: float) -> dict | None:
+        """画面上の位置 (px, py) にある図形を返す(後から描いたものを優先)。"""
+        for drawing in reversed(self.drawings):
+            if self._hits(drawing, (px, py)):
+                return drawing
+        return None
+
+    def _hits(self, drawing: dict, p: tuple[float, float]) -> bool:
+        to_pixels = self.ax.transData.transform
+        xy = [(self._x_of(date), price) for date, price in drawing["points"]]
+        pts = [tuple(v) for v in to_pixels(xy)]
+        kind = drawing["type"]
+        if kind == "hline":
+            return abs(p[1] - pts[0][1]) <= PICK_PIXELS
+        if kind == "vline":
+            return abs(p[0] - pts[0][0]) <= PICK_PIXELS
+        if kind == "rect":
+            (x0, y0), (x1, y1) = pts
+            return (min(x0, x1) - PICK_PIXELS <= p[0] <= max(x0, x1) + PICK_PIXELS
+                    and min(y0, y1) - PICK_PIXELS <= p[1] <= max(y0, y1) + PICK_PIXELS)
+        if kind == "channel":
+            base, parallel = (tuple(map(tuple, to_pixels(line))) for line in channel_lines(xy))
+            if MplPath([base[0], base[1], parallel[1], parallel[0]]).contains_point(p):
+                return True
+            segments = [base, parallel]
+        else:
+            # トレンドラインとパス
+            segments = list(zip(pts, pts[1:]))
+        return any(segment_distance(p, a, b) <= PICK_PIXELS for a, b in segments)
+
+
+def main() -> int:
+    root = tk.Tk()
+    root.title("finagun chart")
+    root.geometry("1200x780")
+    ChartFrame(root, sys.argv[1] if len(sys.argv) > 1 else None).pack(fill="both", expand=True)
+    root.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

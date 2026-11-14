@@ -20,34 +20,50 @@ finagun は、金融・投資系のプログラム集です。
 |---|---|
 | `finagun.py` | 資産管理プログラム。市場終了時に毎日更新し、資産の推移やポートフォリオなどを表示する |
 | `fina_bktest.py` | バックテストを行うプログラム |
+| `fina_techtrainer.py` | テクニカルトレードの訓練用プログラム |
 
 ### 裏方のプログラム
 
 | ファイル | 内容 |
 |---|---|
 | `fina_gather.py` | yfinance を使って各銘柄の情報を取得する。CSV 形式で保存される |
+| `fina_listup_stocks.py` | 東証プライムなどの銘柄一覧データ(`data.xls`)から CSV を生成する |
 | `fina_chart.py` | チャート表示の基本プログラム。matplotlib を使用する |
+| `fina_strategies.py` | ストラテジーの基本クラスとその種類 |
+| `fina_indicators.py` | インジケーターの基本クラスとその種類 |
+| `fina_oscillators.py` | オシレーターの基本クラスとその種類 |
+| `fina_anomalies.py` | アノーマリーの基本クラスとその種類 |
+
+## データフォルダ(git 管理外)
+
+| フォルダ | 内容 |
+|---|---|
+| `listed_stocks/` | 銘柄一覧。毎月更新する。例: `T2610.xls`(東証 2026 年 10 月の銘柄)。この xls から `fina_listup_stocks.py` で生成した CSV も置く |
+| `stock_database/` | 各銘柄ごとの CSV ファイル。2016 年 1 月以降の日足データ |
 
 ## 必要環境
 
 - Python 3.12 以上
 - tkinter(Python 標準。Windows の公式インストーラーなら同梱)
-- 主な外部ライブラリ: yfinance、matplotlib
+- 主な外部ライブラリ: yfinance、matplotlib、pandas、openpyxl(Excel の読み込み用。旧形式の `.xls` を読む場合は xlrd も必要)
 
 ## セットアップ
 
 ```bash
 git clone https://github.com/ujinosuke/finagun.git
 cd finagun
-pip install yfinance matplotlib
+pip install -r requirements.txt
 ```
 
 ## 使い方
 
 ```bash
-python finagun.py        # 資産管理
-python fina_bktest.py    # バックテスト
-python fina_gather.py    # 銘柄情報の取得
+python finagun.py            # 資産管理
+python fina_bktest.py        # バックテスト
+python fina_techtrainer.py   # テクニカルトレードの訓練
+python fina_listup_stocks.py # 銘柄一覧の CSV 生成
+python fina_gather.py        # 銘柄情報の取得
+python fina_chart.py 7203    # チャートの表示(銘柄コードを指定)
 ```
 
 ## 免責事項

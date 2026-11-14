@@ -1,0 +1,6 @@
+# Python が自動で作るキャッシュ
+__pycache__/
+
+# データフォルダ(git 管理外)
+listed_stocks/
+stock_database/
