@@ -26,7 +26,7 @@ finagun は、金融・投資系のプログラム集です。
 
 | ファイル | 内容 |
 |---|---|
-| `fina_gather.py` | yfinance を使って各銘柄の情報を取得する。CSV 形式で保存される |
+| `fina_gather.py` | yfinance を使って、銘柄一覧に載っている全銘柄(PRO Market を除く)の日足データを取得する。CSV 形式で保存される。2 回目以降は更新分だけを取得する |
 | `fina_listup_stocks.py` | 東証プライムなどの銘柄一覧データ(`data.xls`)から CSV を生成する |
 | `fina_chart.py` | チャート表示の基本プログラム。matplotlib を使用する |
 | `fina_strategies.py` | ストラテジーの基本クラスとその種類 |
@@ -40,7 +40,7 @@ finagun は、金融・投資系のプログラム集です。
 | フォルダ | 内容 |
 |---|---|
 | `listed_stocks/` | 銘柄一覧。毎月更新する。例: `T2610.xls`(東証 2026 年 10 月の銘柄)。この xls から `fina_listup_stocks.py` で生成した CSV も置く |
-| `stock_database/` | 各銘柄ごとの CSV ファイル。2016 年 1 月以降の日足データ |
+| `stock_database/` | 各銘柄ごとの CSV ファイル(例: `T7203.csv`)。2016 年 1 月以降の日足データ(OHLCV) |
 
 ## 必要環境
 
