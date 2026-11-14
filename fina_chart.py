@@ -1,7 +1,9 @@
 """ローソク足チャートを表示する(チャート表示の基本プログラム)。
 
 stock_database フォルダの日足データ(fina_gather.py で取得)を読み込み、
-ローソク足と出来高を表示する。陽線は緑、陰線は赤で描く。
+ローソク足を表示する。陽線は緑、陰線は赤で描く。
+移動平均線(SMA 20/75/200、fina_indicators.SMAEssential3)を常に重ねて表示する。
+下段には出来高とオシレーター(fina_oscillators.py)を表示でき、それぞれ表示・非表示を選べる。
 
 使い方:
     python fina_chart.py 7203    # 7203.T のチャートを表示
@@ -10,6 +12,7 @@ stock_database フォルダの日足データ(fina_gather.py で取得)を読み
 操作:
     銘柄の変更      銘柄欄にコードを入力して Enter(または「表示」ボタン)
     足の変更        日足 / 週足 / 月足 ボタン
+    下段の表示      「出来高」「オシレーター」のチェックで表示・非表示。オシレーターは右の欄で種類を選ぶ
     スクロール      チャートの何もない所を左右にドラッグ、または下のスクロールバー
     拡大・縮小      マウスホイール
     図形の追加      図形のボタンを選んでチャートをクリック
@@ -42,6 +45,8 @@ from matplotlib.path import Path as MplPath
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 from fina_gather import csv_path_for, latest_listed_stocks_csv, load_saved
+from fina_indicators import Indicator, SMAEssential3
+from fina_oscillators import OSCILLATORS
 
 UP_COLOR = "#26a69a"    # 陽線(緑)
 DOWN_COLOR = "#ef5350"  # 陰線(赤)
@@ -75,6 +80,14 @@ RIGHT_MARGIN = 4     # 右端の余白(足の本数)
 BODY_HALF_WIDTH = 0.35
 PICK_PIXELS = 6      # 図形をクリックで選ぶときの許容距離
 LINE_WIDTH = 1.4
+INDICATOR_ZORDER = 1.5  # ローソク足(1)より上、図形(2)より下
+# 各段の高さの比率
+PANE_HEIGHTS = {"price": 4, "volume": 1, "oscillator": 1.3}
+
+
+def base_indicators() -> list[Indicator]:
+    """常に表示するインジケーター。ユーザーは非表示にできない。"""
+    return [SMAEssential3()]
 
 
 def resample(daily: pd.DataFrame, rule: str | None) -> pd.DataFrame:
@@ -134,7 +147,12 @@ class ChartFrame(ttk.Frame):
         self.selected = None  # 選択中の図形
         self.drag = None      # 図形の移動中の情報
         self.pan_start = None
+        self.indicators = base_indicators()
+        self.indicator_values = None   # 表示中の足で計算したインジケーターの値(全インジケーターの列)
+        self.oscillator_values = None  # 表示中のオシレーターの値
+        self.ax = self.ax_vol = self.ax_osc = None
         self.candle_artists = []
+        self.indicator_artists = []
         self.drawing_artists = []
 
         self._build_toolbar()
@@ -164,6 +182,21 @@ class ChartFrame(ttk.Frame):
                 bar, text=label, value=label, variable=self.timeframe_var,
                 style="Toolbutton", command=self._show_bars,
             ).pack(side="left")
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+
+        # 下段の表示・非表示
+        self.volume_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(bar, text="出来高", variable=self.volume_var, command=self._rebuild_panes).pack(side="left")
+        self.oscillator_on_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            bar, text="オシレーター", variable=self.oscillator_on_var, command=self._on_oscillator_toggle,
+        ).pack(side="left", padx=(8, 2))
+        self.oscillator_var = tk.StringVar(value=next(iter(OSCILLATORS)))
+        self.oscillator_box = ttk.Combobox(
+            bar, textvariable=self.oscillator_var, values=list(OSCILLATORS), state="readonly", width=8,
+        )
+        self.oscillator_box.pack(side="left")
+        self.oscillator_box.bind("<<ComboboxSelected>>", lambda e: self._rebuild_panes())
 
         # 2 段目: 図形
         bar = ttk.Frame(self)
@@ -194,21 +227,7 @@ class ChartFrame(ttk.Frame):
 
     def _build_chart(self):
         self.fig = Figure(figsize=(11, 6.5), dpi=100)
-        grid = self.fig.add_gridspec(2, 1, height_ratios=[4, 1], hspace=0.03)
-        self.ax = self.fig.add_subplot(grid[0])
-        self.ax_vol = self.fig.add_subplot(grid[1], sharex=self.ax)
-        self.fig.subplots_adjust(left=0.04, right=0.93, top=0.98, bottom=0.06)
-        for ax in (self.ax, self.ax_vol):
-            ax.yaxis.tick_right()
-            ax.grid(True, color="#e6e6e6", linewidth=0.6)
-            ax.set_axisbelow(True)
-            ax.autoscale(False)
-        self.ax.tick_params(labelbottom=False)
-        # 横軸は足の番号。休日の隙間を作らないため、日付ではなく番号で並べる
-        self.ax_vol.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
-        self.ax_vol.xaxis.set_major_formatter(FuncFormatter(self._format_date))
-        self.ax_vol.yaxis.set_major_locator(MaxNLocator(nbins=3))
-        self.ax_vol.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v / 1e6:g}M"))
+        self._build_axes()
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self)
         self.scrollbar = ttk.Scrollbar(self, orient="horizontal", command=self._on_scrollbar)
@@ -223,6 +242,62 @@ class ChartFrame(ttk.Frame):
         self.canvas.mpl_connect("button_release_event", self._on_release)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("scroll_event", self._on_scroll)
+
+    def _build_axes(self):
+        """価格・出来高・オシレーターの段を、表示する設定に合わせて作り直す。"""
+        self.fig.clear()
+        # 図を作り直すと線などはすべて消えるので、記録も空にする
+        self.candle_artists, self.indicator_artists, self.drawing_artists = [], [], []
+        self.oscillator_artists = []
+        panes = ["price"]
+        if self.volume_var.get():
+            panes.append("volume")
+        if self.oscillator_on_var.get():
+            panes.append("oscillator")
+
+        grid = self.fig.add_gridspec(
+            len(panes), 1, height_ratios=[PANE_HEIGHTS[p] for p in panes], hspace=0.03,
+        )
+        self.ax = self.fig.add_subplot(grid[0])
+        axes = {"price": self.ax}
+        for i, pane in enumerate(panes[1:], 1):
+            axes[pane] = self.fig.add_subplot(grid[i], sharex=self.ax)
+        self.ax_vol = axes.get("volume")
+        self.ax_osc = axes.get("oscillator")
+        self.fig.subplots_adjust(left=0.04, right=0.93, top=0.98, bottom=0.06)
+
+        for ax in axes.values():
+            ax.yaxis.tick_right()
+            ax.grid(True, color="#e6e6e6", linewidth=0.6)
+            ax.set_axisbelow(True)
+            ax.autoscale(False)
+            ax.tick_params(labelbottom=False)
+        # 日付は一番下の段にだけ出す
+        bottom = axes[panes[-1]]
+        bottom.tick_params(labelbottom=True)
+        # 横軸は足の番号。休日の隙間を作らないため、日付ではなく番号で並べる
+        bottom.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
+        bottom.xaxis.set_major_formatter(FuncFormatter(self._format_date))
+        if self.ax_vol:
+            self.ax_vol.yaxis.set_major_locator(MaxNLocator(nbins=3))
+            self.ax_vol.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v / 1e6:g}M"))
+
+    def _on_oscillator_toggle(self):
+        # 表示するときは選択が必要。今は RSI しかないので、選択欄は表示中だけ操作できる
+        self.oscillator_box.configure(state="readonly" if self.oscillator_on_var.get() else "disabled")
+        self._rebuild_panes()
+
+    def _rebuild_panes(self):
+        """段の構成を変えて描き直す。表示中の範囲はそのまま保つ。"""
+        xlim = self.ax.get_xlim() if self.bars is not None else None
+        self.pending = self.preview = self.drag = None
+        self.pan_start = None
+        self._build_axes()
+        if self.bars is not None:
+            self._draw_all()
+            self._set_view(*xlim)
+        else:
+            self.canvas.draw_idle()
 
     # ---- 銘柄と足の切り替え ----
 
@@ -253,10 +328,15 @@ class ChartFrame(ttk.Frame):
             return
         self.pending = self.preview = self.drag = None
         self.bars = resample(self.daily, TIMEFRAMES[self.timeframe_var.get()][0])
-        self._draw_candles()
-        self._render_drawings()
+        self._draw_all()
         right = len(self.bars) + RIGHT_MARGIN
         self._set_view(right - INITIAL_BARS, right)
+
+    def _draw_all(self):
+        self._draw_candles()
+        self._draw_indicators()
+        self._draw_oscillator()
+        self._render_drawings()
 
     def _draw_candles(self):
         for artist in self.candle_artists:
@@ -269,13 +349,69 @@ class ChartFrame(ttk.Frame):
             ((i - w, o), (i - w, c), (i + w, c), (i + w, o))
             for i, (o, c) in enumerate(zip(b["Open"], b["Close"]))
         ]
-        volumes = [((i - w, 0), (i - w, v), (i + w, v), (i + w, 0)) for i, v in enumerate(b["Volume"])]
         self.candle_artists = [
             self.ax.add_collection(LineCollection(wicks, colors=colors, linewidths=0.8)),
             # 始値と終値が同じ足も線として見えるよう、枠線を付ける
             self.ax.add_collection(PolyCollection(bodies, facecolors=colors, edgecolors=colors, linewidths=0.6)),
-            self.ax_vol.add_collection(PolyCollection(volumes, facecolors=colors, edgecolors=colors, linewidths=0.6)),
         ]
+        if self.ax_vol:
+            volumes = [((i - w, 0), (i - w, v), (i + w, v), (i + w, 0)) for i, v in enumerate(b["Volume"])]
+            self.candle_artists.append(self.ax_vol.add_collection(
+                PolyCollection(volumes, facecolors=colors, edgecolors=colors, linewidths=0.6)
+            ))
+
+    def _draw_indicators(self):
+        """インジケーターを計算し、価格チャートに線で重ねる。"""
+        for artist in self.indicator_artists:
+            artist.remove()
+        self.indicator_artists = []
+        x = range(len(self.bars))
+        values = []
+        for indicator in self.indicators:
+            result = indicator.compute(self.bars)
+            values.append(result)
+            for column, style in indicator.lines.items():
+                (line,) = self.ax.plot(
+                    x, result[column], color=style.color, linewidth=style.width,
+                    label=style.label, zorder=INDICATOR_ZORDER,
+                )
+                self.indicator_artists.append(line)
+        self.indicator_values = pd.concat(values, axis=1) if values else None
+        if self.indicator_artists:
+            legend = self.ax.legend(
+                handles=self.indicator_artists, loc="upper left", frameon=False, fontsize=9, ncols=len(self.indicator_artists),
+            )
+            self.indicator_artists.append(legend)
+
+    def _draw_oscillator(self):
+        """選択中のオシレーターを下段に描く。"""
+        for artist in self.oscillator_artists:
+            artist.remove()
+        self.oscillator_artists = []
+        self.oscillator_values = None
+        if self.ax_osc is None:
+            return
+        ax, add = self.ax_osc, self.oscillator_artists.append
+        oscillator = OSCILLATORS[self.oscillator_var.get()]()
+        result = oscillator.compute(self.bars)
+        self.oscillator_values = result
+
+        levels = sorted(oscillator.levels)
+        if len(levels) >= 2:
+            add(ax.axhspan(levels[0], levels[-1], color=to_rgba(next(iter(oscillator.lines.values())).color, 0.08)))
+        for level in levels:
+            add(ax.axhline(level, color="#9e9e9e", linewidth=0.8, linestyle="--"))
+        handles = []
+        for column, style in oscillator.lines.items():
+            (line,) = ax.plot(range(len(self.bars)), result[column], color=style.color, linewidth=style.width, label=style.label)
+            handles.append(line)
+            add(line)
+        add(ax.legend(handles=handles, loc="upper left", frameon=False, fontsize=9, ncols=len(handles)))
+
+        if oscillator.ylim:
+            ax.set_ylim(*oscillator.ylim)
+        if levels:
+            ax.set_yticks(levels)
 
     # ---- 表示範囲(スクロールと拡大・縮小) ----
 
@@ -287,12 +423,29 @@ class ChartFrame(ttk.Frame):
         hi = lo + width
         self.ax.set_xlim(lo, hi)
 
-        visible = self.bars.iloc[max(math.ceil(lo), 0): max(math.floor(hi) + 1, 0)]
+        rows = slice(max(math.ceil(lo), 0), max(math.floor(hi) + 1, 0))
+        visible = self.bars.iloc[rows]
         if not visible.empty:
             low, high = visible["Low"].min(), visible["High"].max()
+            # 見えているインジケーターの線も、縦軸の範囲に収める
+            if self.indicator_values is not None:
+                lines = self.indicator_values.iloc[rows].to_numpy().ravel()
+                lines = lines[~pd.isna(lines)]
+                if lines.size:
+                    low, high = min(low, lines.min()), max(high, lines.max())
             pad = (high - low) * 0.05 or high * 0.01 or 1
             self.ax.set_ylim(low - pad, high + pad)
-            self.ax_vol.set_ylim(0, max(visible["Volume"].max(), 1) * 1.1)
+            if self.ax_vol:
+                self.ax_vol.set_ylim(0, max(visible["Volume"].max(), 1) * 1.1)
+            if self.ax_osc and self.oscillator_values is not None:
+                oscillator = OSCILLATORS[self.oscillator_var.get()]
+                if oscillator.ylim is None:
+                    # 縦軸の範囲が決まっていないオシレーターは、見えている値に合わせる
+                    values = self.oscillator_values.iloc[rows].to_numpy().ravel()
+                    values = values[~pd.isna(values)]
+                    if values.size:
+                        pad = (values.max() - values.min()) * 0.05 or 1
+                        self.ax_osc.set_ylim(values.min() - pad, values.max() + pad)
 
         self.scrollbar.set((lo - xmin) / (xmax - xmin), (hi - xmin) / (xmax - xmin))
         self.canvas.draw_idle()
@@ -419,6 +572,14 @@ class ChartFrame(ttk.Frame):
             f"{self.bars.index[i]:%Y-%m-%d}   始 {bar['Open']:,.1f}   高 {bar['High']:,.1f}   "
             f"安 {bar['Low']:,.1f}   終 {bar['Close']:,.1f}   出来高 {int(bar['Volume']):,}"
         )
+        if self.indicator_values is not None:
+            for column, value in self.indicator_values.iloc[i].items():
+                if not pd.isna(value):
+                    text += f"   {column} {value:,.1f}"
+        if self.oscillator_values is not None:
+            for column, value in self.oscillator_values.iloc[i].items():
+                if not pd.isna(value):
+                    text += f"   {column} {value:,.1f}"
         if event.inaxes is self.ax:
             text += f"      カーソル {event.ydata:,.1f}"
         self.info_var.set(text)
