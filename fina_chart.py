@@ -3,7 +3,8 @@
 stock_database フォルダの日足データ(fina_gather.py で取得)を読み込み、
 ローソク足を表示する。陽線は緑、陰線は赤で描く。
 移動平均線(SMA 20/75/200、fina_indicators.SMAEssential3)を常に重ねて表示する。
-下段には出来高とオシレーター(fina_oscillators.py)を表示でき、それぞれ表示・非表示を選べる。
+下段には出来高、オシレーター(fina_oscillators.py)、コンディション(fina_condition.py)を表示でき、
+それぞれ表示・非表示を選べる。
 
 使い方:
     python fina_chart.py 7203    # 7203.T のチャートを表示
@@ -12,7 +13,8 @@ stock_database フォルダの日足データ(fina_gather.py で取得)を読み
 操作:
     銘柄の変更      銘柄欄にコードを入力して Enter(または「表示」ボタン)
     足の変更        日足 / 週足 / 月足 ボタン
-    下段の表示      「出来高」「オシレーター」のチェックで表示・非表示。オシレーターは右の欄で種類を選ぶ
+    下段の表示      「出来高」「オシレーター」「コンディション」のチェックで表示・非表示。
+                    オシレーターとコンディションは、右の欄で種類を選ぶ
     スクロール      チャートの何もない所を左右にドラッグ、または下のスクロールバー
     拡大・縮小      マウスホイール
     図形の追加      図形のボタンを選んでチャートをクリック
@@ -35,6 +37,7 @@ import sys
 import tkinter as tk
 from tkinter import colorchooser, messagebox, ttk
 
+import matplotlib
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.collections import LineCollection, PolyCollection
@@ -47,6 +50,10 @@ from matplotlib.ticker import FuncFormatter, MaxNLocator
 from fina_gather import csv_path_for, latest_listed_stocks_csv, load_saved
 from fina_indicators import Indicator, SMAEssential3
 from fina_oscillators import OSCILLATORS
+from fina_condition import CONDITIONS
+
+# チャート内の日本語(凡例など)を表示できるフォント。先頭から順に、見つかったものを使う
+matplotlib.rcParams["font.family"] = ["Yu Gothic", "Meiryo", "MS Gothic", "sans-serif"]
 
 UP_COLOR = "#26a69a"    # 陽線(緑)
 DOWN_COLOR = "#ef5350"  # 陰線(赤)
@@ -81,8 +88,10 @@ BODY_HALF_WIDTH = 0.35
 PICK_PIXELS = 6      # 図形をクリックで選ぶときの許容距離
 LINE_WIDTH = 1.4
 INDICATOR_ZORDER = 1.5  # ローソク足(1)より上、図形(2)より下
+LINK_ZORDER = 1.8       # コンディションの根拠の線。インジケーターより上、図形より下
+CROSSHAIR_COLOR = "#787b86"
 # 各段の高さの比率
-PANE_HEIGHTS = {"price": 4, "volume": 1, "oscillator": 1.3}
+PANE_HEIGHTS = {"price": 4, "volume": 1, "oscillator": 1.3, "condition": 0.5}
 
 
 def base_indicators() -> list[Indicator]:
@@ -150,7 +159,8 @@ class ChartFrame(ttk.Frame):
         self.indicators = base_indicators()
         self.indicator_values = None   # 表示中の足で計算したインジケーターの値(全インジケーターの列)
         self.oscillator_values = None  # 表示中のオシレーターの値
-        self.ax = self.ax_vol = self.ax_osc = None
+        self.condition_values = None   # 表示中のコンディションの判定結果
+        self.ax = self.ax_vol = self.ax_osc = self.ax_cond = None
         self.candle_artists = []
         self.indicator_artists = []
         self.drawing_artists = []
@@ -197,6 +207,16 @@ class ChartFrame(ttk.Frame):
         )
         self.oscillator_box.pack(side="left")
         self.oscillator_box.bind("<<ComboboxSelected>>", lambda e: self._rebuild_panes())
+        self.condition_on_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            bar, text="コンディション", variable=self.condition_on_var, command=self._on_condition_toggle,
+        ).pack(side="left", padx=(8, 2))
+        self.condition_var = tk.StringVar(value=next(iter(CONDITIONS)))
+        self.condition_box = ttk.Combobox(
+            bar, textvariable=self.condition_var, values=list(CONDITIONS), state="readonly", width=16,
+        )
+        self.condition_box.pack(side="left")
+        self.condition_box.bind("<<ComboboxSelected>>", lambda e: self._rebuild_panes())
 
         # 2 段目: 図形
         bar = ttk.Frame(self)
@@ -220,6 +240,9 @@ class ChartFrame(ttk.Frame):
         ttk.Button(bar, text="…", width=3, command=self._choose_color).pack(side="left", padx=(4, 0))
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(bar, text="全消去", width=7, command=self.clear_drawings).pack(side="left")
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        self.crosshair_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bar, text="十字線", variable=self.crosshair_var, command=self._hide_crosshair).pack(side="left")
 
         # マウス位置の足の日付と OHLCV を表示する
         self.info_var = tk.StringVar()
@@ -248,12 +271,14 @@ class ChartFrame(ttk.Frame):
         self.fig.clear()
         # 図を作り直すと線などはすべて消えるので、記録も空にする
         self.candle_artists, self.indicator_artists, self.drawing_artists = [], [], []
-        self.oscillator_artists = []
+        self.oscillator_artists, self.condition_artists = [], []
         panes = ["price"]
         if self.volume_var.get():
             panes.append("volume")
         if self.oscillator_on_var.get():
             panes.append("oscillator")
+        if self.condition_on_var.get():
+            panes.append("condition")
 
         grid = self.fig.add_gridspec(
             len(panes), 1, height_ratios=[PANE_HEIGHTS[p] for p in panes], hspace=0.03,
@@ -264,6 +289,7 @@ class ChartFrame(ttk.Frame):
             axes[pane] = self.fig.add_subplot(grid[i], sharex=self.ax)
         self.ax_vol = axes.get("volume")
         self.ax_osc = axes.get("oscillator")
+        self.ax_cond = axes.get("condition")
         self.fig.subplots_adjust(left=0.04, right=0.93, top=0.98, bottom=0.06)
 
         for ax in axes.values():
@@ -282,9 +308,18 @@ class ChartFrame(ttk.Frame):
             self.ax_vol.yaxis.set_major_locator(MaxNLocator(nbins=3))
             self.ax_vol.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v / 1e6:g}M"))
 
+        # 十字線: 縦線は全段に、横線は価格チャートにだけ引く。普段は隠しておく
+        style = {"color": CROSSHAIR_COLOR, "linewidth": 0.8, "linestyle": "--", "visible": False, "zorder": 5}
+        self.crosshair_v = [ax.axvline(0, **style) for ax in axes.values()]
+        self.crosshair_h = self.ax.axhline(0, **style)
+
     def _on_oscillator_toggle(self):
         # 表示するときは選択が必要。今は RSI しかないので、選択欄は表示中だけ操作できる
         self.oscillator_box.configure(state="readonly" if self.oscillator_on_var.get() else "disabled")
+        self._rebuild_panes()
+
+    def _on_condition_toggle(self):
+        self.condition_box.configure(state="readonly" if self.condition_on_var.get() else "disabled")
         self._rebuild_panes()
 
     def _rebuild_panes(self):
@@ -336,6 +371,7 @@ class ChartFrame(ttk.Frame):
         self._draw_candles()
         self._draw_indicators()
         self._draw_oscillator()
+        self._draw_condition()
         self._render_drawings()
 
     def _draw_candles(self):
@@ -412,6 +448,53 @@ class ChartFrame(ttk.Frame):
             ax.set_ylim(*oscillator.ylim)
         if levels:
             ax.set_yticks(levels)
+
+    def _draw_condition(self):
+        """選択中のコンディションを最下段に描く。状態ごとに 1 行を使い、成り立つ足に色を付ける。"""
+        for artist in self.condition_artists:
+            artist.remove()
+        self.condition_artists = []
+        self.condition_values = None
+        if self.ax_cond is None:
+            return
+        ax = self.ax_cond
+        condition = CONDITIONS[self.condition_var.get()]()
+        result = condition.compute(self.bars)
+        self.condition_values = result
+
+        states = list(condition.states.items())
+        for row, (state, style) in enumerate(reversed(states)):
+            marks = [
+                ((i - 0.5, row + 0.15), (i - 0.5, row + 0.85), (i + 0.5, row + 0.85), (i + 0.5, row + 0.15))
+                for i in result.index.get_indexer(result.index[result[state]])
+            ]
+            self.condition_artists.append(ax.add_collection(
+                PolyCollection(marks, facecolors=style.color, edgecolors=style.color, linewidths=0.8)
+            ))
+        ax.set_ylim(0, len(states))
+        ax.set_yticks([row + 0.5 for row in range(len(states))])
+        ax.set_yticklabels([style.label for _, style in reversed(states)], fontsize=8)
+        ax.tick_params(axis="y", length=0)
+        ax.grid(False, axis="y")
+        self.condition_artists.append(ax.text(
+            0.005, 0.5, condition.name, transform=ax.transAxes, fontsize=8, va="center", color="#555555",
+        ))
+
+        # 判定の根拠の線。価格チャートと、表示中のオシレーター(名前が一致するもの)に描く
+        oscillator_name = OSCILLATORS[self.oscillator_var.get()].name if self.ax_osc else None
+        for link in condition.links(self.bars):
+            if link.pane == "price":
+                target = self.ax
+            elif link.pane == oscillator_name:
+                target = self.ax_osc
+            else:
+                continue
+            (x0, y0), (x1, y1) = [(self._x_of(date), value) for date, value in (link.start, link.end)]
+            (line,) = target.plot(
+                [x0, x1], [y0, y1], color=condition.states[link.state].color, linewidth=1.6,
+                marker="o", markersize=3.5, zorder=LINK_ZORDER,
+            )
+            self.condition_artists.append(line)
 
     # ---- 表示範囲(スクロールと拡大・縮小) ----
 
@@ -549,7 +632,28 @@ class ChartFrame(ttk.Frame):
             # 作図中の図形を、マウス位置まで仮に描く
             self.preview = self._snap(event)
             self._render_drawings()
+        self._update_crosshair(event)
         self._show_info(event)
+
+    def _update_crosshair(self, event):
+        """十字線がオンで、マウスが価格チャートの上にあるときだけ十字線を出す。"""
+        if not (self.crosshair_var.get() and event.inaxes is self.ax):
+            self._hide_crosshair()
+            return
+        # 縦線は一番近い足の中心に合わせる
+        x = min(max(round(event.xdata), 0), len(self.bars) - 1)
+        for line in self.crosshair_v:
+            line.set_xdata([x, x])
+            line.set_visible(True)
+        self.crosshair_h.set_ydata([event.ydata, event.ydata])
+        self.crosshair_h.set_visible(True)
+        self.canvas.draw_idle()
+
+    def _hide_crosshair(self):
+        if self.crosshair_h.get_visible():
+            for line in self.crosshair_v + [self.crosshair_h]:
+                line.set_visible(False)
+            self.canvas.draw_idle()
 
     def _on_escape(self):
         if self.pending:
@@ -580,6 +684,12 @@ class ChartFrame(ttk.Frame):
             for column, value in self.oscillator_values.iloc[i].items():
                 if not pd.isna(value):
                     text += f"   {column} {value:,.1f}"
+        if self.condition_values is not None:
+            row = self.condition_values.iloc[i]
+            condition = CONDITIONS[self.condition_var.get()]
+            for state, style in condition.states.items():
+                if row[state]:
+                    text += f"   【{condition.name}: {style.label}】 {row.get('note', '')}"
         if event.inaxes is self.ax:
             text += f"      カーソル {event.ydata:,.1f}"
         self.info_var.set(text)
@@ -759,7 +869,7 @@ class ChartFrame(ttk.Frame):
 def main() -> int:
     root = tk.Tk()
     root.title("finagun chart")
-    root.geometry("1200x780")
+    root.geometry("1200x820")
     ChartFrame(root, sys.argv[1] if len(sys.argv) > 1 else None).pack(fill="both", expand=True)
     root.mainloop()
     return 0

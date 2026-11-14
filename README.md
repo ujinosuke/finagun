@@ -32,6 +32,7 @@ finagun は、金融・投資系のプログラム集です。
 | `fina_strategies.py` | ストラテジーの基本クラスとその種類 |
 | `fina_indicators.py` | インジケーターの基本クラスとその種類 |
 | `fina_oscillators.py` | オシレーターの基本クラスとその種類 |
+| `fina_condition.py` | 状態の基本クラスとその種類 |
 | `fina_anomalies.py` | アノーマリーの基本クラスとその種類 |
 
 ## データフォルダ(git 管理外)
