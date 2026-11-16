@@ -4,3 +4,8 @@ __pycache__/
 # データフォルダ(git 管理外)
 listed_stocks/
 stock_database/
+
+# ウォッチリストの保存ファイル(個人ごとの登録内容。git 管理外)
+watchlist.json
+watchlist.json.tmp
+watchlist.json.bak

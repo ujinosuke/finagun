@@ -30,6 +30,8 @@ stock_database フォルダの日足データ(fina_gather.py で取得)を読み
     図形の削除      図形を右クリック、または選択して Delete。「全消去」ですべて削除
 
 他のプログラムからは、ChartFrame を tkinter の部品として組み込める。
+表示の設定と図形は get_state() / set_state() で取り出し・復元できる
+(fina_watchlist.py が watchlist.json への保存に使う)。
 """
 
 import math
@@ -41,7 +43,7 @@ import matplotlib
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.collections import LineCollection, PolyCollection
-from matplotlib.colors import to_rgba
+from matplotlib.colors import is_color_like, to_rgba
 from matplotlib.figure import Figure
 from matplotlib.patches import FancyArrowPatch, Polygon, Rectangle
 from matplotlib.path import Path as MplPath
@@ -136,6 +138,28 @@ def segment_distance(p, a, b) -> float:
     length2 = dx * dx + dy * dy
     t = min(max(((px - ax) * dx + (py - ay) * dy) / length2, 0), 1) if length2 else 0
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def _is_hex_color(value) -> bool:
+    """"#2962ff" の形の色か(tkinter と matplotlib の両方で使える形)。"""
+    return isinstance(value, str) and len(value) == 7 and value[0] == "#" and is_color_like(value)
+
+
+def _parse_drawing(saved) -> dict | None:
+    """保存されていた図形 1 つを、ChartFrame が持つ形に直す。壊れていれば None。"""
+    try:
+        kind, color = saved["type"], saved["color"]
+        points = [(pd.Timestamp(date), float(price)) for date, price in saved["points"]]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if kind not in POINTS_NEEDED or not _is_hex_color(color):
+        return None
+    if any(pd.isna(date) or not math.isfinite(price) for date, price in points):
+        return None
+    needed = POINTS_NEEDED[kind]
+    if len(points) != needed if needed else len(points) < MIN_PATH_POINTS:
+        return None
+    return {"type": kind, "points": points, "color": color}
 
 
 class ChartFrame(ttk.Frame):
@@ -840,6 +864,76 @@ class ChartFrame(ttk.Frame):
         self.drawings.clear()
         self.selected = None
         self._cancel_pending()
+
+    # ---- 状態の保存と復元 ----
+
+    def get_state(self) -> dict:
+        """表示の設定と全銘柄の図形を、JSON に保存できる形で返す。他のプログラムから使う。"""
+        return {
+            "timeframe": self.timeframe_var.get(),
+            "volume": self.volume_var.get(),
+            "oscillator_on": self.oscillator_on_var.get(),
+            "oscillator": self.oscillator_var.get(),
+            "condition_on": self.condition_on_var.get(),
+            "condition": self.condition_var.get(),
+            "crosshair": self.crosshair_var.get(),
+            "color": self.color,
+            "drawings": {
+                code: [
+                    {
+                        "type": d["type"],
+                        "color": d["color"],
+                        "points": [[f"{date:%Y-%m-%d}", float(price)] for date, price in d["points"]],
+                    }
+                    for d in drawings
+                ]
+                for code, drawings in self.drawings_by_code.items() if drawings
+            },
+        }
+
+    def set_state(self, state: dict) -> None:
+        """get_state() で得た状態に戻す。
+
+        手で書き換えたファイルや古い版のファイルでも止まらないよう、
+        使えない値(なくなったオシレーターの名前など)は無視して、今の設定を残す。
+        """
+        choices = {
+            "timeframe": (self.timeframe_var, TIMEFRAMES),
+            "oscillator": (self.oscillator_var, OSCILLATORS),
+            "condition": (self.condition_var, CONDITIONS),
+        }
+        for key, (var, valid) in choices.items():
+            if isinstance(state.get(key), str) and state[key] in valid:
+                var.set(state[key])
+        switches = {
+            "volume": self.volume_var,
+            "oscillator_on": self.oscillator_on_var,
+            "condition_on": self.condition_on_var,
+            "crosshair": self.crosshair_var,
+        }
+        for key, var in switches.items():
+            if isinstance(state.get(key), bool):
+                var.set(state[key])
+        self.oscillator_box.configure(state="readonly" if self.oscillator_on_var.get() else "disabled")
+        self.condition_box.configure(state="readonly" if self.condition_on_var.get() else "disabled")
+        if _is_hex_color(state.get("color")):
+            self.color = state["color"]
+            self.color_indicator.configure(bg=self.color)
+
+        saved = state.get("drawings")
+        self.drawings_by_code = {
+            code: [d for d in map(_parse_drawing, drawings) if d]
+            for code, drawings in (saved.items() if isinstance(saved, dict) else ())
+            if isinstance(drawings, list)
+        }
+        if self.code:
+            self.drawings = self.drawings_by_code.setdefault(self.code, [])
+        self.selected = self.pending = self.preview = self.drag = self.pan_start = None
+        self._build_axes()
+        if self.daily is None:
+            self.canvas.draw_idle()
+        else:
+            self._show_bars()
 
     # ---- 図形の当たり判定 ----
 
