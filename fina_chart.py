@@ -322,6 +322,14 @@ class ChartFrame(ttk.Frame):
         self.condition_box.configure(state="readonly" if self.condition_on_var.get() else "disabled")
         self._rebuild_panes()
 
+    def show_condition(self, name: str) -> None:
+        """指定したコンディション(CONDITIONS の表示名)を最下段に表示する。他のプログラムから使う。"""
+        if self.condition_on_var.get() and self.condition_var.get() == name:
+            return
+        self.condition_var.set(name)
+        self.condition_on_var.set(True)
+        self._on_condition_toggle()
+
     def _rebuild_panes(self):
         """段の構成を変えて描き直す。表示中の範囲はそのまま保つ。"""
         xlim = self.ax.get_xlim() if self.bars is not None else None

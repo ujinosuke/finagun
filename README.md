@@ -21,6 +21,7 @@ finagun は、金融・投資系のプログラム集です。
 | `finagun.py` | 資産管理プログラム。市場終了時に毎日更新し、資産の推移やポートフォリオなどを表示する |
 | `fina_bktest.py` | バックテストを行うプログラム |
 | `fina_techtrainer.py` | テクニカルトレードの訓練用プログラム |
+| `fina_screening.py` | スクリーニングプログラム |
 
 ### 裏方のプログラム
 
@@ -62,6 +63,7 @@ pip install -r requirements.txt
 python finagun.py            # 資産管理
 python fina_bktest.py        # バックテスト
 python fina_techtrainer.py   # テクニカルトレードの訓練
+python fina_screening.py     # スクリーニング(先に fina_gather.py で株価を最新にしておく)
 python fina_listup_stocks.py # 銘柄一覧の CSV 生成
 python fina_gather.py        # 銘柄情報の取得
 python fina_chart.py 7203    # チャートの表示(銘柄コードを指定)
