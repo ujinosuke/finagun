@@ -520,7 +520,7 @@ class CompareFrame(ttk.Frame):
             )
             return
         window = tk.Toplevel(self)
-        window.title(f"finagun chart - {code} {self._stock_name(code)}")
+        window.title(f"ToreCan chart - {code} {self._stock_name(code)}")
         window.geometry("1200x820")
         ChartFrame(window, code).pack(fill="both", expand=True)
         window.bind("<Destroy>", lambda e: e.widget is window and self.chart_windows.pop(code, None))
@@ -630,7 +630,7 @@ class CompareFrame(ttk.Frame):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("finagun compare")
+    root.title("ToreCan compare")
     root.geometry("1100x600")
     try:
         codes = read_codes()

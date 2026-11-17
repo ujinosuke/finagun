@@ -343,7 +343,7 @@ class WatchlistFrame(ttk.Frame):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("finagun watchlist")
+    root.title("ToreCan watchlist")
     root.geometry("1600x880")
     try:
         data = read_watchlist()

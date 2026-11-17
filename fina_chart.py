@@ -35,11 +35,13 @@ stock_database フォルダの日足データ(fina_gather.py で取得)を読み
 他のプログラムからは、ChartFrame を tkinter の部品として組み込める。
 表示の設定と図形は get_state() / set_state() で取り出し・復元できる
 (fina_watchlist.py が watchlist.json への保存に使う)。
+売買ポイントは set_trades() で重ね、select_trade() でその売買へ表示を動かせる(fina_bktest.py が使う)。
 """
 
 import math
 import sys
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import colorchooser, messagebox, ttk
 
 import matplotlib
@@ -97,6 +99,10 @@ LINE_WIDTH = 1.4
 INDICATOR_ZORDER = 1.5  # ローソク足(1)より上、図形(2)より下
 LINK_ZORDER = 1.8       # コンディションの根拠の線。インジケーターより上、図形より下
 CROSSHAIR_COLOR = "#787b86"
+TRADE_ZORDER = 1.9         # 売買ポイント。コンディションの根拠の線より上、図形より下
+BUY_COLOR = "#2962ff"      # 買いの印(▲)
+SELL_COLOR = "#ff6d00"     # 売りの印(▼)
+TRADE_VIEW_MARGIN = 30     # 売買を選んだとき、その前後に見せる足の本数
 # 各段の高さの比率
 PANE_HEIGHTS = {"price": 4, "volume": 1, "oscillator": 1.3, "condition": 0.5}
 
@@ -158,6 +164,17 @@ def _parse_drawing(saved) -> dict | None:
     return {"type": kind, "points": points, "color": color}
 
 
+@dataclass(frozen=True)
+class TradeMark:
+    """チャートに示す売買 1 つ。exit_date が None なら保有中。"""
+    entry_date: pd.Timestamp
+    entry_price: float
+    exit_date: pd.Timestamp | None = None
+    exit_price: float | None = None
+    take_profit: float | None = None  # 選んだときに横線で示す(None・無限大・0 以下なら示さない)
+    stop_loss: float | None = None
+
+
 class ChartFrame(ttk.Frame):
     """ローソク足チャートと操作用ツールバーをまとめた部品。"""
 
@@ -184,6 +201,9 @@ class ChartFrame(ttk.Frame):
         self.candle_artists = []
         self.indicator_artists = []
         self.drawing_artists = []
+        self.trade_artists = []
+        self.trade_marks: list[TradeMark] = []  # 表示中の銘柄の売買ポイント(バックテストなどから渡される)
+        self.selected_trade: int | None = None  # 利確・損切りの線を出す売買(trade_marks の番号)
 
         self._build_toolbar()
         self._build_chart()
@@ -297,7 +317,7 @@ class ChartFrame(ttk.Frame):
         self.fig.clear()
         # 図を作り直すと線などはすべて消えるので、記録も空にする
         self.candle_artists, self.indicator_artists, self.drawing_artists = [], [], []
-        self.oscillator_artists, self.condition_artists = [], []
+        self.oscillator_artists, self.condition_artists, self.trade_artists = [], [], []
         panes = ["price"]
         if self.volume_var.get():
             panes.append("volume")
@@ -388,6 +408,7 @@ class ChartFrame(ttk.Frame):
         self.name_var.set(f"{code} {self.names.get(code, '')}".strip())
         self.drawings = self.drawings_by_code.setdefault(code, [])
         self.selected = None
+        self.trade_marks, self.selected_trade = [], None  # 売買ポイントは銘柄ごとに渡し直してもらう
         self._show_bars()
 
     def _show_bars(self):
@@ -405,6 +426,7 @@ class ChartFrame(ttk.Frame):
         self._draw_indicators()
         self._draw_oscillator()
         self._draw_condition()
+        self._draw_trades()
         self._render_drawings()
 
     def _draw_candles(self):
@@ -528,6 +550,80 @@ class ChartFrame(ttk.Frame):
                 marker="o", markersize=3.5, zorder=LINK_ZORDER,
             )
             self.condition_artists.append(line)
+
+    # ---- 売買ポイント ----
+
+    def set_trades(self, marks: list[TradeMark]) -> None:
+        """売買ポイントを価格チャートに重ねる。他のプログラム(fina_bktest.py など)から使う。
+
+        表示中の銘柄の売買を渡す。銘柄を変えると(set_code)、売買ポイントは消える。
+        """
+        self.trade_marks = list(marks)
+        self.selected_trade = None
+        if self.bars is not None:
+            self._draw_trades()
+            self.canvas.draw_idle()
+
+    def select_trade(self, number: int | None) -> None:
+        """trade_marks の number 番目の売買を選び、利確・損切りの線を出して、その売買が見える位置へ動かす。"""
+        self.selected_trade = number
+        if self.bars is None:
+            return
+        self._draw_trades()
+        if number is None:
+            self.canvas.draw_idle()
+            return
+        mark = self.trade_marks[number]
+        self.show_range(mark.entry_date, mark.exit_date or self.bars.index[-1])
+
+    def show_range(self, start: pd.Timestamp, end: pd.Timestamp) -> None:
+        """start から end までが真ん中に見えるように、表示範囲を動かす。短い範囲は INITIAL_BARS 本で見せる。"""
+        if self.bars is None:
+            return
+        x0, x1 = self._x_of(start), self._x_of(end)
+        width = max(x1 - x0 + TRADE_VIEW_MARGIN * 2, INITIAL_BARS)
+        center = (x0 + x1) / 2
+        self._set_view(center - width / 2, center + width / 2)
+
+    def _draw_trades(self):
+        """売買ポイントを描く。買いは ▲、売りは ▼(終値の位置)、買いと売りを点線で結ぶ(勝ちは緑、負けは赤)。"""
+        for artist in self.trade_artists:
+            artist.remove()
+        self.trade_artists = []
+        if not self.trade_marks:
+            return
+        ax, add = self.ax, self.trade_artists.append
+        buys, sells = [], []
+        for number, mark in enumerate(self.trade_marks):
+            x0 = self._x_of(mark.entry_date)
+            buys.append((x0, mark.entry_price))
+            x1 = len(self.bars) - 1
+            if mark.exit_date is not None:
+                x1 = self._x_of(mark.exit_date)
+                sells.append((x1, mark.exit_price))
+                color = UP_COLOR if mark.exit_price >= mark.entry_price else DOWN_COLOR
+                (line,) = ax.plot([x0, x1], [mark.entry_price, mark.exit_price], color=color,
+                                  linewidth=1.2, linestyle=":", zorder=TRADE_ZORDER)
+                add(line)
+            if number == self.selected_trade:
+                # 選んだ売買の利確・損切りの値を、保有した期間に横線で示す
+                for value, color, label in ((mark.take_profit, UP_COLOR, "利確"), (mark.stop_loss, DOWN_COLOR, "損切り")):
+                    if value is None or not math.isfinite(value) or value <= 0:
+                        continue
+                    (line,) = ax.plot([x0, x1], [value, value], color=color, linewidth=1.2,
+                                      linestyle="--", zorder=TRADE_ZORDER)
+                    add(line)
+                    add(ax.text(x1 + 0.5, value, f" {label} {value:,.1f}", color=color, fontsize=8,
+                                va="center", zorder=TRADE_ZORDER))
+                (ring,) = ax.plot([x0], [mark.entry_price], marker="o", markersize=14, markerfacecolor="none",
+                                  markeredgecolor=BUY_COLOR, markeredgewidth=1.5, zorder=TRADE_ZORDER)
+                add(ring)
+        for points, marker, color in ((buys, "^", BUY_COLOR), (sells, "v", SELL_COLOR)):
+            if points:
+                xs, ys = zip(*points)
+                (line,) = ax.plot(xs, ys, linestyle="none", marker=marker, markersize=9, color=color,
+                                  markeredgecolor="white", markeredgewidth=0.8, zorder=TRADE_ZORDER)
+                add(line)
 
     # ---- 表示範囲(スクロールと拡大・縮小) ----
 
@@ -971,7 +1067,7 @@ class ChartFrame(ttk.Frame):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("finagun chart")
+    root.title("ToreCan chart")
     root.geometry("1200x820")
     ChartFrame(root, sys.argv[1] if len(sys.argv) > 1 else None).pack(fill="both", expand=True)
     root.mainloop()

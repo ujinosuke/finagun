@@ -360,7 +360,7 @@ class ScreeningFrame(ttk.Frame):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("finagun screening")
+    root.title("ToreCan screening")
     root.geometry("1700x880")
     try:
         frame = ScreeningFrame(root)
