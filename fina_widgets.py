@@ -18,7 +18,8 @@ from tkinter import ttk
 
 from fina_stocks import MAX_CANDIDATES, Stock, search_stocks
 
-CANDIDATE_ROWS = 8  # 候補の欄の高さ(行数)
+CANDIDATE_ROWS = 8   # 候補の欄の高さ(行数)
+DROPDOWN_WIDTH = 44  # 重ねて出す候補の欄の幅(文字数)
 
 
 class StockSearchBox(ttk.Frame):
@@ -27,6 +28,11 @@ class StockSearchBox(ttk.Frame):
     on_pick     候補を決めたときに、選んだ銘柄(Stock)を渡して呼ぶ。入力欄は空にしてから呼ぶ
     on_message  利用者への案内(「該当する銘柄がありません。」など)を渡して呼ぶ。
                 案内を消すときは空文字を渡す。省略したときは案内を出さない
+    on_unmatched 候補がないまま Enter・ボタンを押したときに、入力した文字を渡して呼ぶ
+                (銘柄一覧にないコードを直接指定したいときに使う)。省略したときは何もしない
+    dropdown    True なら、候補の欄を入力欄の下に重ねて出す(ツールバーの中など、
+                部品の高さを変えたくないところで使う)。False なら、部品の中に入れて下の部品を押し下げる
+    entry_width 入力欄の幅(文字数)。None なら、部品の幅いっぱいに広げる
     """
 
     def __init__(
@@ -39,20 +45,29 @@ class StockSearchBox(ttk.Frame):
         button: str = "決定",
         rows: int = CANDIDATE_ROWS,
         limit: int = MAX_CANDIDATES,
+        on_unmatched: Callable[[str], None] | None = None,
+        dropdown: bool = False,
+        entry_width: int | None = None,
     ):
         super().__init__(master)
         self.index = index
         self.on_pick = on_pick
         self.on_message = on_message or (lambda text: None)
+        self.on_unmatched = on_unmatched
         self.limit = limit
+        self.dropdown = dropdown
         self.candidates: list[Stock] = []  # 候補の欄に出している銘柄
 
         self.bar = ttk.Frame(self)
         self.bar.pack(side="top", fill="x", padx=(0, 4))
         ttk.Label(self.bar, text=label).pack(side="left")
         self.query_var = tk.StringVar()
-        self.entry = ttk.Entry(self.bar, textvariable=self.query_var)
-        self.entry.pack(side="left", fill="x", expand=True, padx=(4, 4))
+        if entry_width is None:
+            self.entry = ttk.Entry(self.bar, textvariable=self.query_var)
+            self.entry.pack(side="left", fill="x", expand=True, padx=(4, 4))
+        else:
+            self.entry = ttk.Entry(self.bar, textvariable=self.query_var, width=entry_width)
+            self.entry.pack(side="left", padx=(4, 4))
         ttk.Button(self.bar, text=button, width=len(button) * 2 + 1, command=self.pick).pack(side="left")
         self.query_var.trace_add("write", lambda *_: self._update_candidates())
         self.entry.bind("<Return>", lambda e: self.pick())
@@ -60,10 +75,13 @@ class StockSearchBox(ttk.Frame):
         self.entry.bind("<Down>", lambda e: self._move_candidate(1))
         self.entry.bind("<Up>", lambda e: self._move_candidate(-1))
 
-        # 候補の欄。入力があるときだけ、入力欄のすぐ下に出す
-        self.candidate_frame = ttk.Frame(self)
+        # 候補の欄。入力があるときだけ、入力欄のすぐ下に出す。
+        # dropdown のときは、ウィンドウの直下の部品にして、他の部品(チャートなど)の上に重ねる
+        parent = self.winfo_toplevel() if dropdown else self
+        self.candidate_frame = ttk.Frame(parent, relief="solid", borderwidth=1) if dropdown else ttk.Frame(parent)
         self.candidate_list = tk.Listbox(
             self.candidate_frame, height=rows, exportselection=False, activestyle="none",
+            width=DROPDOWN_WIDTH if dropdown else 20,
         )
         scrollbar = ttk.Scrollbar(self.candidate_frame, orient="vertical", command=self.candidate_list.yview)
         self.candidate_list.configure(yscrollcommand=scrollbar.set)
@@ -71,6 +89,11 @@ class StockSearchBox(ttk.Frame):
         self.candidate_list.pack(side="left", fill="both", expand=True)
         self.candidate_list.bind("<Double-Button-1>", lambda e: self.pick())
         self.candidate_list.bind("<Return>", lambda e: self.pick())
+        if dropdown:
+            # 入力欄から他の所へ移ったら、重ねた候補の欄を隠す(候補をクリックしたときは隠さない)
+            self.entry.bind("<FocusOut>", lambda e: self.after(150, self._hide_if_unfocused), add="+")
+            self.entry.bind("<FocusIn>", lambda e: self._update_candidates(), add="+")
+            self.bind("<Destroy>", lambda e: e.widget is self and self.candidate_frame.destroy(), add="+")
 
     def focus_set(self) -> None:
         """入力欄にカーソルを置く。"""
@@ -81,8 +104,15 @@ class StockSearchBox(ttk.Frame):
         self.query_var.set("")
 
     def pick(self) -> None:
-        """候補の欄で選んでいる銘柄(選んでいなければ先頭の銘柄)を on_pick に渡す。"""
+        """候補の欄で選んでいる銘柄(選んでいなければ先頭の銘柄)を on_pick に渡す。
+
+        候補がなく、on_unmatched があれば、入力した文字を on_unmatched に渡す。
+        """
         if not self.candidates:
+            query = self.query_var.get().strip()
+            if query and self.on_unmatched:
+                self.clear()
+                self.on_unmatched(query)
             return
         current = self.candidate_list.curselection()
         stock = self.candidates[current[0] if current else 0]
@@ -99,11 +129,36 @@ class StockSearchBox(ttk.Frame):
             self.candidate_list.insert("end", f"{stock.code}  {stock.name}  ({stock.market})")
         if self.candidates:
             self.candidate_list.selection_set(0)
-            self.candidate_frame.pack(side="top", fill="x", pady=(2, 0))
+            self._show_candidates()
             self.on_message("")
         else:
-            self.candidate_frame.pack_forget()
+            self._hide_candidates()
             self.on_message("該当する銘柄がありません。" if query.strip() else "")
+
+    def _show_candidates(self):
+        if self.dropdown:
+            # 入力欄の左下に合わせて重ね、一番手前に出す
+            self.candidate_frame.place(in_=self.entry, relx=0, rely=1, x=0, y=2, anchor="nw")
+            self.candidate_frame.lift()
+        else:
+            self.candidate_frame.pack(side="top", fill="x", pady=(2, 0))
+
+    def _hide_candidates(self):
+        if self.dropdown:
+            self.candidate_frame.place_forget()
+        else:
+            self.candidate_frame.pack_forget()
+
+    def _hide_if_unfocused(self):
+        """入力欄にも候補の欄にもカーソルがなければ、重ねた候補の欄を隠す。"""
+        if not self.winfo_exists():
+            return
+        try:
+            focused = self.focus_get()
+        except KeyError:  # 他のウィンドウ(ダイアログなど)にカーソルがある
+            focused = None
+        if focused not in (self.entry, self.candidate_list):
+            self._hide_candidates()
 
     def _move_candidate(self, step: int):
         """候補の選択を上下に動かす(入力欄にカーソルを置いたまま選べるようにする)。"""

@@ -11,7 +11,10 @@ stock_database フォルダの日足データ(fina_gather.py で取得)を読み
     python fina_chart.py         # 起動後に画面で銘柄コードを入力
 
 操作:
-    銘柄の変更      銘柄欄にコードを入力して Enter(または「表示」ボタン)
+    銘柄の変更      銘柄欄に銘柄コードまたは銘柄名の一部を入力すると、候補が出る。
+                    上下キーで選んで Enter、候補をダブルクリック、または「表示」ボタンで表示する。
+                    全角・半角、大文字・小文字、ひらがな・カタカナは区別しない。
+                    候補にない銘柄(上場廃止など)も、コードを入力して Enter で表示できる
     足の変更        日足 / 週足 / 月足 ボタン
     下段の表示      「出来高」「オシレーター」「コンディション」のチェックで表示・非表示。
                     オシレーターとコンディションは、右の欄で種類を選ぶ
@@ -50,7 +53,8 @@ from matplotlib.path import Path as MplPath
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 from fina_gather import csv_path_for, load_saved
-from fina_stocks import load_stock_names
+from fina_stocks import load_listed, load_stock_names, stock_index
+from fina_widgets import StockSearchBox
 from fina_indicators import Indicator, SMAEssential3
 from fina_oscillators import OSCILLATORS
 from fina_condition import CONDITIONS
@@ -193,14 +197,20 @@ class ChartFrame(ttk.Frame):
         bar = ttk.Frame(self)
         bar.pack(side="top", fill="x", padx=4, pady=(4, 0))
 
-        ttk.Label(bar, text="銘柄").pack(side="left")
-        self.code_var = tk.StringVar()
-        entry = ttk.Entry(bar, textvariable=self.code_var, width=8)
-        entry.pack(side="left", padx=(4, 2))
-        entry.bind("<Return>", lambda e: self.set_code(self.code_var.get()))
-        ttk.Button(bar, text="表示", width=5, command=lambda: self.set_code(self.code_var.get())).pack(side="left")
+        # 銘柄コードまたは銘柄名の一部で探す。銘柄一覧にないコード(上場廃止など)も、そのまま入力して表示できる
+        try:
+            index = stock_index(load_listed())
+        except FileNotFoundError:  # 銘柄一覧がなくても、コードの入力で表示できるようにする
+            index = []
+        self.search = StockSearchBox(
+            bar, index,
+            on_pick=lambda stock: self.set_code(stock.code),
+            on_unmatched=self.set_code,
+            label="銘柄", button="表示", dropdown=True, entry_width=18,
+        )
+        self.search.pack(side="left")
         self.name_var = tk.StringVar()
-        ttk.Label(bar, textvariable=self.name_var, width=24).pack(side="left", padx=8)
+        ttk.Label(bar, textvariable=self.name_var, width=28).pack(side="left", padx=8)
 
         self.timeframe_var = tk.StringVar(value="日足")
         for label in TIMEFRAMES:
@@ -375,8 +385,7 @@ class ChartFrame(ttk.Frame):
             return
         self.code = code
         self.daily = daily.dropna()
-        self.code_var.set(code)
-        self.name_var.set(self.names.get(code, ""))
+        self.name_var.set(f"{code} {self.names.get(code, '')}".strip())
         self.drawings = self.drawings_by_code.setdefault(code, [])
         self.selected = None
         self._show_bars()
