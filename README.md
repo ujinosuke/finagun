@@ -1,6 +1,12 @@
-# finagun(ファイナガン)
+# ToreCan(トレキャン)
 
-finagun は、金融・投資系のプログラム集です。
+ToreCan は、金融・投資系のプログラム集です。
+
+「トレキャン」の「キャン」には、3 つの意味を込めています。「じぶんでできる・えがける・学べる」
+
+- **Can** … じぶんでできる
+- **Canvas** … じぶんでえがける
+- **Campus** … 大学構内のような(綴りは Cam ですが、日本語では「キャン」と読むので)
 
 - すべてのプログラムは Python(3.12 以上)で記述されています。
 - GUI エンジンは tkinter です。
@@ -18,7 +24,8 @@ finagun は、金融・投資系のプログラム集です。
 
 | ファイル | 内容 |
 |---|---|
-| `finagun.py` | 資産管理プログラム。市場終了時に毎日更新し、資産の推移やポートフォリオなどを表示する |
+| `ToreCan.py` | 統合プログラム。ホーム画面 |
+| `fina_asset.py` | 資産管理プログラム |
 | `fina_bktest.py` | バックテストを行うプログラム |
 | `fina_techtrainer.py` | テクニカルトレードの訓練用プログラム |
 | `fina_screening.py` | スクリーニングプログラム |
@@ -64,7 +71,8 @@ pip install -r requirements.txt
 ## 使い方
 
 ```bash
-python finagun.py            # 資産管理
+python ToreCan.py            # ホーム画面
+python fina_asset.py         # 資産管理
 python fina_bktest.py        # バックテスト
 python fina_techtrainer.py   # テクニカルトレードの訓練
 python fina_screening.py     # スクリーニング(先に fina_gather.py で株価を最新にしておく)
