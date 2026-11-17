@@ -15,3 +15,5 @@ compare.json
 compare.json.tmp
 # 比較表の Excel 出力(既定のファイル名)
 compare_*.xlsx
+# テクニカルトレード訓練のレポート(既定のファイル名)
+techtrainer_*.html

@@ -36,6 +36,7 @@ stock_database フォルダの日足データ(fina_gather.py で取得)を読み
 表示の設定と図形は get_state() / set_state() で取り出し・復元できる
 (fina_watchlist.py が watchlist.json への保存に使う)。
 売買ポイントは set_trades() で重ね、select_trade() でその売買へ表示を動かせる(fina_bktest.py が使う)。
+set_data() で途中までの日足だけを表示できる(fina_techtrainer.py が、先の足を隠すのに使う)。
 """
 
 import math
@@ -178,8 +179,10 @@ class TradeMark:
 class ChartFrame(ttk.Frame):
     """ローソク足チャートと操作用ツールバーをまとめた部品。"""
 
-    def __init__(self, master, code: str | None = None):
+    def __init__(self, master, code: str | None = None, searchable: bool = True):
+        """searchable が False なら、銘柄欄を出さない(表示する銘柄やデータを、他のプログラムが決めるとき)。"""
         super().__init__(master)
+        self.searchable = searchable
         self.names = load_stock_names()
         self.code = None
         self.daily = None   # 日足データ
@@ -218,17 +221,18 @@ class ChartFrame(ttk.Frame):
         bar.pack(side="top", fill="x", padx=4, pady=(4, 0))
 
         # 銘柄コードまたは銘柄名の一部で探す。銘柄一覧にないコード(上場廃止など)も、そのまま入力して表示できる
-        try:
-            index = stock_index(load_listed())
-        except FileNotFoundError:  # 銘柄一覧がなくても、コードの入力で表示できるようにする
-            index = []
-        self.search = StockSearchBox(
-            bar, index,
-            on_pick=lambda stock: self.set_code(stock.code),
-            on_unmatched=self.set_code,
-            label="銘柄", button="表示", dropdown=True, entry_width=18,
-        )
-        self.search.pack(side="left")
+        if self.searchable:
+            try:
+                index = stock_index(load_listed())
+            except FileNotFoundError:  # 銘柄一覧がなくても、コードの入力で表示できるようにする
+                index = []
+            self.search = StockSearchBox(
+                bar, index,
+                on_pick=lambda stock: self.set_code(stock.code),
+                on_unmatched=self.set_code,
+                label="銘柄", button="表示", dropdown=True, entry_width=18,
+            )
+            self.search.pack(side="left")
         self.name_var = tk.StringVar()
         ttk.Label(bar, textvariable=self.name_var, width=28).pack(side="left", padx=8)
 
@@ -410,6 +414,26 @@ class ChartFrame(ttk.Frame):
         self.selected = None
         self.trade_marks, self.selected_trade = [], None  # 売買ポイントは銘柄ごとに渡し直してもらう
         self._show_bars()
+
+    def set_data(self, code: str, daily: pd.DataFrame) -> None:
+        """渡した日足(途中までのデータなど)で表示する。他のプログラム(fina_techtrainer.py など)から使う。
+
+        同じ銘柄で続けて呼ぶと、表示中の本数(拡大・縮小の具合)を保ったまま、右端の足が見える位置に合わせる。
+        set_code と違い、売買ポイントは消さない。
+        """
+        width = None
+        if self.bars is not None and self.code == code:
+            lo, hi = self.ax.get_xlim()
+            width = hi - lo
+        self.code = code
+        self.daily = daily
+        self.name_var.set(f"{code} {self.names.get(code, '')}".strip())
+        self.drawings = self.drawings_by_code.setdefault(code, [])
+        self.pending = self.preview = self.drag = None
+        self.bars = resample(self.daily, TIMEFRAMES[self.timeframe_var.get()][0])
+        self._draw_all()
+        right = len(self.bars) + RIGHT_MARGIN
+        self._set_view(right - (width or INITIAL_BARS), right)
 
     def _show_bars(self):
         """選択中の足(日足・週足・月足)で描き直し、直近の足が見える位置に合わせる。"""
