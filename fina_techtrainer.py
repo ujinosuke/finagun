@@ -24,7 +24,7 @@
 レポート:
     取引の一覧、損益(円)、勝率、最大ドローダウンなどの成績と、同じ期間の比較を出す。
         バイ・アンド・ホールド: 開始日に買い、終わりまで持ち続けた場合
-        ストラテジー          : 選んだストラテジーで同じ株数を売買した場合(終値で売買)
+        ストラテジー          : 選んだストラテジーで同じ株数を売買した場合(約定の値は、手動の売買と同じ設定)
     「HTML に保存」で、チャートの画像も含めた 1 つの HTML ファイルに保存する。
 
 操作:
@@ -57,7 +57,7 @@ from matplotlib.figure import Figure
 from fina_chart import BUY_COLOR, DOWN_COLOR, SELL_COLOR, UP_COLOR, ChartFrame, TradeMark
 from fina_gather import BASE_DIR, csv_path_for, load_saved
 from fina_stocks import load_listed, stock_index
-from fina_strategies import Strategy, all_strategies
+from fina_strategies import FILL_MODES, Strategy, all_strategies
 from fina_widgets import StockSearchBox
 
 DEFAULT_SHARES = 100
@@ -69,10 +69,7 @@ NO_STRATEGY = "(使わない)"
 REPORT_CONTEXT_BARS = 60      # レポートのチャートで、開始日より前に見せる足の本数
 FINAL_REASON = "終了時決済"
 
-PRICE_MODES = {
-    "close": "終値",
-    "next_open": "翌日の始値",
-}
+PRICE_MODES = FILL_MODES  # 約定の値(名前 -> 表示名)。ストラテジーの売買と同じ選択肢
 
 # レポートの取引の表の列(列の名前 -> (見出し、幅、文字の寄せ方))
 TRADE_COLUMNS = {
@@ -311,12 +308,12 @@ def benchmarks(session: Session) -> list[Benchmark]:
     if session.strategy is not None:
         bars = daily.iloc[: end + 1]
         pnl, count = 0.0, 0
-        for t in session.strategy.trades(bars, daily.index[start]):
+        for t in session.strategy.trades(bars, daily.index[start], session.mode):
             exit_price = t.exit.price if t.exit is not None else float(close.iloc[end])
             pnl += (exit_price - t.entry.price) * session.shares
             count += 1
         result.append(Benchmark(
-            f"ストラテジー {session.strategy.name}", pnl, f"{count} 回の取引(ストラテジーの値で売買。終わりで保有中なら終値で決済)",
+            f"ストラテジー {session.strategy.name}", pnl, f"{count} 回の取引({PRICE_MODES[session.mode]}で売買。終わりで保有中なら終値で決済)",
         ))
     return result
 

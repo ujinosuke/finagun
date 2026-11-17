@@ -16,6 +16,10 @@ fina_bktest.py は、各銘柄の trades() を集めて成績を出す。
 約束ごと(CLAUDE.md も参照):
     - 買いのみ(レバレッジなし)。売りから入る取引は扱わない
     - 断りがなければ、株価は終値(Close)だけを使う。売買も、判定した足の終値で行ったことにする
+    - trades() の fill で約定の値を選べる(FILL_MODES)。
+        終値      : ストラテジーが決めた値(判定した足の終値)で約定する
+        翌日の始値: 買い・売りを判定した足の次の足の始値で約定する。
+                    判定(entries・exit_on)は終値のまま変えず、約定の日と値だけを 1 本後ろへずらす
     - その足の時点で分かることだけを使う(未来の足を見ない)。
       山や谷のように、後の足が出そろって確定するものは、確定した足から使う
 
@@ -34,13 +38,22 @@ fina_bktest.py は、各銘柄の trades() を集めて成績を出す。
 import math
 import sys
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
 from fina_condition import pivots
 from fina_gather import csv_path_for, load_saved
 from fina_indicators import sma
+
+
+# 約定の値の選び方(名前 -> 表示名)
+FILL_CLOSE = "close"
+FILL_NEXT_OPEN = "next_open"
+FILL_MODES = {
+    FILL_CLOSE: "終値",
+    FILL_NEXT_OPEN: "翌日の始値",
+}
 
 
 @dataclass(frozen=True)
@@ -112,28 +125,52 @@ class Strategy(ABC):
             return Exit(i, bars.index[i], close, "損切り")
         return None
 
-    def trades(self, bars: pd.DataFrame, start: pd.Timestamp | None = None) -> list[Trade]:
+    def trades(self, bars: pd.DataFrame, start: pd.Timestamp | None = None, fill: str = FILL_CLOSE) -> list[Trade]:
         """1 銘柄の取引の一覧。同時に持つのは 1 つだけで、保有中に出た買いの合図は使わない。
 
         start を渡すと、その日より前の買いの合図は使わない(バックテストの期間の始まり)。
         インジケーターは start より前の足も使って計算するので、期間の初日から合図を出せる。
+        fill は約定の値(FILL_MODES)。FILL_NEXT_OPEN なら、判定した足の次の足の始値で買い・売りする。
+            最後の足で出た買いの合図は、次の足がないので使わない。
+            最後の足で出た売りの合図は、次の足がないので保有中(exit が None)のままにする。
         """
+        if fill not in FILL_MODES:
+            raise ValueError(f"約定の値の指定が正しくありません: {fill}")
         result = []
-        free_from = 0  # この行番号以降の合図なら買える
+        free_from = 0  # この行番号以降の合図なら買える(判定した足の行番号で比べる)
+        last = len(bars) - 1
         for entry in self.entries(bars):
             if entry.index < free_from or (start is not None and entry.date < start):
                 continue
+            if fill == FILL_NEXT_OPEN and entry.index >= last:
+                break  # 次の足がないので買えない
             exit_ = None
             for i in range(entry.index + 1, len(bars)):
-                exit_ = self.exit_on(entry, bars, i)
+                exit_ = self.exit_on(entry, bars, i)  # 判定は、ストラテジーが決めた買い(終値)のまま行う
                 if exit_ is not None:
                     break
-            result.append(Trade(entry, exit_))
-            if exit_ is None:  # データの最後まで保有中
-                break
-            free_from = exit_.index + 1  # 売った足の次の足から、また買える
+            if fill == FILL_NEXT_OPEN:
+                filled_entry = replace(entry, index=entry.index + 1, date=bars.index[entry.index + 1],
+                                       price=next_open(bars, entry.index))
+                filled_exit = None
+                if exit_ is not None and exit_.index < last:
+                    filled_exit = replace(exit_, index=exit_.index + 1, date=bars.index[exit_.index + 1],
+                                          price=next_open(bars, exit_.index))
+                result.append(Trade(filled_entry, filled_exit))
+                if filled_exit is None:  # データの最後まで保有中
+                    break
+            else:
+                result.append(Trade(entry, exit_))
+                if exit_ is None:  # データの最後まで保有中
+                    break
+            free_from = exit_.index + 1  # 売りを判定した足の次の足から、また買える
         return result
 
+
+def next_open(bars: pd.DataFrame, i: int) -> float:
+    """i 本目の次の足の始値。始値がなければ、その足の終値。"""
+    value = bars["Open"].iloc[i + 1]
+    return float(bars["Close"].iloc[i + 1] if math.isnan(value) else value)
 
 def recent_high_above(close: pd.Series, i: int, price: float, left: int, right: int, lookback: int):
     """i 本目の時点で確定している山(終値)のうち、price より高く、i に一番近いものを返す。

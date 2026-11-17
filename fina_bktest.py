@@ -1,6 +1,6 @@
 """バックテスト。ストラテジー(fina_strategies.py / usr_strategies.py)の成績を、保存済みの株価で調べる。
 
-上の欄で、ストラテジーと期間を選ぶ(2 つのモードで共通)。モードはタブで切り替える。
+上の欄で、ストラテジー・期間・約定の値を選ぶ(2 つのモードで共通)。モードはタブで切り替える。
 
 スクリーニング
     選んだ市場の全銘柄でストラテジーを動かし、成績の良かった 20 銘柄と悪かった 5 銘柄を表に出す。
@@ -17,7 +17,9 @@
     利確・損切りの値を横線で示す。
 
 約束ごと:
-    - 売買は、ストラテジーが決めた値(初期の実装では判定した足の終値)で行ったことにする。手数料は含めない
+    - 約定の値は、上の欄で選ぶ(fina_strategies.FILL_MODES)。手数料は含めない
+        終値      : ストラテジーが決めた値(初期の実装では判定した足の終値)で売買する
+        翌日の始値: 買い・売りを判定した足の、次の足の始値で売買する
     - 期間の始まりより前の買いの合図は使わない。インジケーターは期間より前の足も使って計算する
     - 期間の終わりの足までに売っていない取引は、その足の終値で売ったことにする(理由は「期間終了」)
     - 同時に持つのは 1 銘柄につき 1 つだけ(fina_strategies.Strategy.trades と同じ)
@@ -48,7 +50,7 @@ import pandas as pd
 from fina_chart import ChartFrame, TradeMark
 from fina_gather import START_DATE, csv_path_for, load_saved
 from fina_stocks import load_listed, stock_index
-from fina_strategies import Exit, Strategy, Trade, all_strategies
+from fina_strategies import FILL_CLOSE, FILL_MODES, Exit, Strategy, Trade, all_strategies
 from fina_widgets import StockSearchBox
 
 # 市場の選択肢(表示名 -> 最初にチェックを入れるか)。「市場・商品区分」の先頭で分け、どれでもなければ「その他」
@@ -140,8 +142,9 @@ def load_bars(code: str) -> pd.DataFrame | None:
     return None if daily is None else daily.dropna(subset=["Close"])
 
 
-def run_backtest(strategy: Strategy, bars: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> list[Trade]:
-    """期間 start〜end でストラテジーを動かし、取引の一覧を返す。
+def run_backtest(strategy: Strategy, bars: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp,
+                 fill: str = FILL_CLOSE) -> list[Trade]:
+    """期間 start〜end でストラテジーを動かし、取引の一覧を返す。fill は約定の値(FILL_MODES)。
 
     end より後の足は渡さない(未来の足で売買を決めないため)。
     end までに売っていない取引は、end までの最後の足の終値で売ったことにする。
@@ -149,7 +152,7 @@ def run_backtest(strategy: Strategy, bars: pd.DataFrame, start: pd.Timestamp, en
     bars = bars.loc[:end]
     if bars.empty:
         return []
-    trades = strategy.trades(bars, start)
+    trades = strategy.trades(bars, start, fill)
     if trades and trades[-1].exit is None:
         last = len(bars) - 1
         trades[-1] = Trade(trades[-1].entry, Exit(last, bars.index[last], bars["Close"].iloc[last], PERIOD_END_REASON))
@@ -178,14 +181,14 @@ def strategy_instance(name: str) -> Strategy:
     return all_strategies()[name]()
 
 
-def evaluate(task: tuple[str, str, pd.Timestamp, pd.Timestamp]) -> Summary:
-    """1 銘柄の成績を出す(スクリーニングの各プロセスで動く)。task は (コード, ストラテジー名, 始まり, 終わり)。"""
-    code, name, start, end = task
+def evaluate(task: tuple[str, str, pd.Timestamp, pd.Timestamp, str]) -> Summary:
+    """1 銘柄の成績を出す(スクリーニングの各プロセスで動く)。task は (コード, ストラテジー名, 始まり, 終わり, 約定の値)。"""
+    code, name, start, end, fill = task
     try:
         bars = load_bars(code)
         if bars is None:
             return Summary(code, error="データがありません")
-        return summarize(code, run_backtest(strategy_instance(name), bars, start, end))
+        return summarize(code, run_backtest(strategy_instance(name), bars, start, end, fill))
     except Exception as e:  # noqa: BLE001  1 銘柄の失敗で全体を止めない
         return Summary(code, error=f"{type(e).__name__}: {e}")
 
@@ -200,13 +203,14 @@ def format_pct(value: float, sign: bool = True) -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    """バックテストの条件(ストラテジーと期間)。"""
+    """バックテストの条件(ストラテジー・期間・約定の値)。"""
     strategy: str
     start: pd.Timestamp
     end: pd.Timestamp
+    fill: str = FILL_CLOSE  # 約定の値(FILL_MODES)
 
     def describe(self) -> str:
-        return f"{self.strategy} / {self.start:%Y-%m-%d}〜{self.end:%Y-%m-%d}"
+        return f"{self.strategy} / {self.start:%Y-%m-%d}〜{self.end:%Y-%m-%d} / {FILL_MODES[self.fill]}で約定"
 
 
 class BacktestFrame(ttk.Frame):
@@ -250,6 +254,11 @@ class BacktestFrame(ttk.Frame):
         ttk.Label(bar, text="〜").pack(side="left", padx=2)
         ttk.Entry(bar, textvariable=self.end_var, width=11).pack(side="left")
         ttk.Label(bar, text="(YYYY-MM-DD)", foreground="#777777").pack(side="left", padx=(4, 0))
+
+        ttk.Label(bar, text="約定").pack(side="left", padx=(16, 0))
+        self.fill_var = tk.StringVar(value=FILL_CLOSE)
+        for fill, label in FILL_MODES.items():
+            ttk.Radiobutton(bar, text=label, value=fill, variable=self.fill_var).pack(side="left", padx=(4, 0))
         self._apply_period()
         self._show_description()
 
@@ -275,7 +284,7 @@ class BacktestFrame(ttk.Frame):
         if start > end:
             messagebox.showerror("fina_bktest", "期間の始まりが、終わりより後になっています。", parent=self)
             return None
-        return Settings(self.strategy_var.get(), start, end)
+        return Settings(self.strategy_var.get(), start, end, self.fill_var.get())
 
     def set_settings(self, settings: Settings) -> None:
         """条件の欄を settings に合わせる(スクリーニングの結果から深掘りへ移るときに使う)。"""
@@ -283,6 +292,7 @@ class BacktestFrame(ttk.Frame):
         self._show_description()
         self.start_var.set(f"{settings.start:%Y-%m-%d}")
         self.end_var.set(f"{settings.end:%Y-%m-%d}")
+        self.fill_var.set(settings.fill)
 
     # ---- 共通の部品 ----
 
@@ -396,7 +406,7 @@ class ScreeningTab(ttk.Frame):
             tree.delete(*tree.get_children())
         self.progress.configure(maximum=self.total, value=0)
         self.status_var.set(f"検証中: 0 / {self.total} 銘柄({settings.describe()})")
-        tasks = [(code, settings.strategy, settings.start, settings.end) for code in codes]
+        tasks = [(code, settings.strategy, settings.start, settings.end, settings.fill) for code in codes]
         threading.Thread(target=self._scan, args=(tasks,), daemon=True).start()
         self.after(POLL_INTERVAL, self._poll)
 
@@ -538,7 +548,7 @@ class DetailTab(ttk.Frame):
             return
         strategy = self.app.strategies[settings.strategy]()
         self.code = code
-        self.trades = run_backtest(strategy, bars, settings.start, settings.end)
+        self.trades = run_backtest(strategy, bars, settings.start, settings.end, settings.fill)
         self.status_var.set(f"{code} {self.app.stock_name(code)}  ({settings.describe()})")
         self._show_summary(summarize(code, self.trades))
         self._fill_table()
