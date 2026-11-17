@@ -23,6 +23,7 @@ finagun は、金融・投資系のプログラム集です。
 | `fina_techtrainer.py` | テクニカルトレードの訓練用プログラム |
 | `fina_screening.py` | スクリーニングプログラム |
 | `fina_watchlist.py` | 株価チャートのウォッチリスト。銘柄コードや銘柄名で検索して、グループごとに複数の銘柄を登録できる。登録内容とチャートの描画の状態は `watchlist.json` に保存し、次回の起動時に自動で読み込む |
+| `fina_compare.py` | 銘柄を比較する。株価,時価総額,EV/Rev,EV/EBITDA,PER,PSR,配当利回り を比較できる |
 
 ### 裏方のプログラム
 
@@ -68,6 +69,7 @@ python fina_bktest.py        # バックテスト
 python fina_techtrainer.py   # テクニカルトレードの訓練
 python fina_screening.py     # スクリーニング(先に fina_gather.py で株価を最新にしておく)
 python fina_watchlist.py     # ウォッチリスト(登録内容はルートの watchlist.json に保存される)
+python fina_compare.py       # 銘柄の比較表(登録内容はルートの compare.json に保存される)
 python fina_listup_stocks.py # 銘柄一覧の CSV 生成
 python fina_gather.py        # 銘柄情報の取得
 python fina_chart.py 7203    # チャートの表示(銘柄コードを指定)

@@ -9,3 +9,9 @@ stock_database/
 watchlist.json
 watchlist.json.tmp
 watchlist.json.bak
+
+# 比較表の保存ファイル(個人ごとの登録内容。git 管理外)
+compare.json
+compare.json.tmp
+# 比較表の Excel 出力(既定のファイル名)
+compare_*.xlsx
