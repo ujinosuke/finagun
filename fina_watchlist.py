@@ -31,21 +31,16 @@ import math
 import os
 import sys
 import tkinter as tk
-import unicodedata
-from dataclasses import dataclass
 from tkinter import messagebox, simpledialog, ttk
-
-import pandas as pd
 
 from fina_chart import ChartFrame
 from fina_gather import BASE_DIR, csv_path_for, load_saved
-from fina_screening import load_listed
+from fina_stocks import load_listed, stock_index
+from fina_widgets import StockSearchBox
 
 WATCHLIST_PATH = BASE_DIR / "watchlist.json"
 FORMAT_VERSION = 1
 DEFAULT_GROUP = "ウォッチリスト"  # グループが 1 つもないときに作るグループの名前
-MAX_CANDIDATES = 50   # 銘柄の候補を出す最大の数
-CANDIDATE_ROWS = 8    # 候補の欄の高さ(行数)
 LIST_WIDTH = 400      # 一覧の最初の幅(ピクセル)
 
 # 一覧の列(列の名前 -> (見出し、幅、文字の寄せ方))
@@ -55,54 +50,6 @@ LIST_COLUMNS = {
     "close": ("終値", 74, "e"),
     "change": ("前日比", 62, "e"),
 }
-
-# ひらがな -> カタカナ(銘柄名はカタカナが多いので、ひらがなで入力しても見つかるようにする)
-HIRAGANA_TO_KATAKANA = {c: c + 0x60 for c in range(0x3041, 0x3097)}
-
-
-def normalize(text: str) -> str:
-    """検索用に文字をそろえる(全角・半角、大文字・小文字、ひらがな・カタカナを区別しない)。"""
-    return unicodedata.normalize("NFKC", text).casefold().translate(HIRAGANA_TO_KATAKANA)
-
-
-@dataclass(frozen=True)
-class Stock:
-    """検索の対象になる銘柄 1 つ。"""
-    code: str
-    name: str
-    market: str
-    code_key: str  # 検索用にそろえたコード
-    name_key: str  # 検索用にそろえた銘柄名
-
-
-def stock_index(listed: pd.DataFrame) -> list[Stock]:
-    """銘柄一覧(コードが行の名前)から、検索用の一覧を作る。"""
-    names = listed["銘柄名"].fillna("")
-    markets = listed["市場・商品区分"].fillna("")
-    return [
-        Stock(code, name, market.split("（")[0], normalize(code), normalize(name))
-        for code, name, market in zip(listed.index, names, markets)
-    ]
-
-
-def search_stocks(index: list[Stock], query: str, limit: int = MAX_CANDIDATES) -> list[Stock]:
-    """銘柄コードまたは銘柄名に query を含む銘柄を返す。
-
-    query を空白で区切り、すべての語をコードか銘柄名に含む銘柄を選ぶ。
-    コードが先頭から一致する銘柄、銘柄名が先頭から一致する銘柄、それ以外の順に並べる。
-    """
-    words = normalize(query).split()
-    if not words:
-        return []
-    first = words[0]
-
-    def rank(stock: Stock) -> int:
-        if stock.code_key.startswith(first):
-            return 0
-        return 1 if stock.name_key.startswith(first) else 2
-
-    found = [s for s in index if all(w in s.code_key or w in s.name_key for w in words)]
-    return sorted(found, key=rank)[:limit]  # 同じ順位の中は、銘柄一覧の順(コード順)のまま
 
 
 def read_watchlist() -> dict:
@@ -151,10 +98,8 @@ class WatchlistFrame(ttk.Frame):
     def __init__(self, master, data: dict):
         super().__init__(master)
         self.listed = load_listed()
-        self.index = stock_index(self.listed)
         self.groups = parse_groups(data.get("groups"))
         self.group_index = 0
-        self.candidates: list[Stock] = []  # 候補の欄に出している銘柄
         self.quotes: dict[str, tuple[str, str]] = {}  # コード -> (終値、前日比) の表示
 
         panes = ttk.PanedWindow(self, orient="horizontal")
@@ -162,8 +107,8 @@ class WatchlistFrame(ttk.Frame):
         left = ttk.Frame(panes, width=LIST_WIDTH)
         left.pack_propagate(False)
         self._build_group_bar(left)
-        self._build_search(left)
         self._build_list(left)
+        self._build_search(left)
         self.chart = ChartFrame(panes)
         panes.add(left, weight=0)
         panes.add(self.chart, weight=1)
@@ -196,30 +141,14 @@ class WatchlistFrame(ttk.Frame):
             ttk.Button(bar, text=text, width=len(text) * 2 + 1, command=command).pack(side="left", padx=(0, 2))
 
     def _build_search(self, parent):
-        self.search_bar = ttk.Frame(parent)
-        self.search_bar.pack(side="top", fill="x", padx=4, pady=(6, 0))
-        ttk.Label(self.search_bar, text="銘柄の追加").pack(side="left")
-        self.query_var = tk.StringVar()
-        self.query_entry = ttk.Entry(self.search_bar, textvariable=self.query_var)
-        self.query_entry.pack(side="left", fill="x", expand=True, padx=(4, 4))
-        ttk.Button(self.search_bar, text="追加", width=5, command=self.add_candidate).pack(side="left")
-        self.query_var.trace_add("write", lambda *_: self._update_candidates())
-        self.query_entry.bind("<Return>", lambda e: self.add_candidate())
-        self.query_entry.bind("<Escape>", lambda e: self.query_var.set(""))
-        self.query_entry.bind("<Down>", lambda e: self._move_candidate(1))
-        self.query_entry.bind("<Up>", lambda e: self._move_candidate(-1))
-
-        # 候補の欄。入力があるときだけ、入力欄のすぐ下に出す
-        self.candidate_frame = ttk.Frame(parent)
-        self.candidate_list = tk.Listbox(
-            self.candidate_frame, height=CANDIDATE_ROWS, exportselection=False, activestyle="none",
+        self.search = StockSearchBox(
+            parent, stock_index(self.listed),
+            on_pick=lambda stock: self.add_stock(stock.code),
+            on_message=self.status_var.set,
+            label="銘柄の追加", button="追加",
         )
-        scrollbar = ttk.Scrollbar(self.candidate_frame, orient="vertical", command=self.candidate_list.yview)
-        self.candidate_list.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.candidate_list.pack(side="left", fill="both", expand=True)
-        self.candidate_list.bind("<Double-Button-1>", lambda e: self.add_candidate())
-        self.candidate_list.bind("<Return>", lambda e: self.add_candidate())
+        # 銘柄の一覧(_build_list で先に配置済み)より上に置く
+        self.search.pack(side="top", fill="x", padx=(4, 0), pady=(6, 0), before=self.list_frame)
 
     def _build_list(self, parent):
         self.status_var = tk.StringVar()
@@ -232,7 +161,7 @@ class WatchlistFrame(ttk.Frame):
         ttk.Button(bar, text="↓", width=3, command=lambda: self.move_stock(1)).pack(side="left", padx=(2, 0))
         ttk.Button(bar, text="削除", width=5, command=self.remove_stock).pack(side="right")
 
-        frame = ttk.Frame(parent)
+        self.list_frame = frame = ttk.Frame(parent)
         frame.pack(side="top", fill="both", expand=True, padx=(4, 0), pady=(6, 0))
         self.tree = ttk.Treeview(frame, columns=list(LIST_COLUMNS), show="headings", selectmode="browse")
         for column, (heading, width, anchor) in LIST_COLUMNS.items():
@@ -323,43 +252,7 @@ class WatchlistFrame(ttk.Frame):
         self._refresh_stocks()
         self.save()
 
-    # ---- 銘柄の検索と登録 ----
-
-    def _update_candidates(self):
-        """入力に合う銘柄を候補の欄に出す。入力がなければ欄を隠す。"""
-        query = self.query_var.get()
-        self.candidates = search_stocks(self.index, query)
-        self.candidate_list.delete(0, "end")
-        for stock in self.candidates:
-            self.candidate_list.insert("end", f"{stock.code}  {stock.name}  ({stock.market})")
-        if self.candidates:
-            self.candidate_list.selection_set(0)
-            self.candidate_frame.pack(side="top", fill="x", padx=(4, 0), pady=(2, 0), after=self.search_bar)
-            self.status_var.set("")
-        else:
-            self.candidate_frame.pack_forget()
-            self.status_var.set("該当する銘柄がありません。" if query.strip() else "")
-
-    def _move_candidate(self, step: int):
-        """候補の選択を上下に動かす(入力欄にカーソルを置いたまま選べるようにする)。"""
-        if not self.candidates:
-            return "break"
-        current = self.candidate_list.curselection()
-        i = min(max((current[0] if current else -1) + step, 0), len(self.candidates) - 1)
-        self.candidate_list.selection_clear(0, "end")
-        self.candidate_list.selection_set(i)
-        self.candidate_list.see(i)
-        return "break"
-
-    def add_candidate(self) -> None:
-        """候補の欄で選んでいる銘柄を、選択中のグループに登録する。"""
-        if not self.candidates:
-            return
-        current = self.candidate_list.curselection()
-        stock = self.candidates[current[0] if current else 0]
-        self.query_var.set("")  # 先に欄を空にする(後にすると、add_stock が出した案内が消える)
-        self.add_stock(stock.code)
-        self.query_entry.focus_set()
+    # ---- 銘柄の登録 ----
 
     def add_stock(self, code: str) -> None:
         """銘柄を選択中のグループに登録して選ぶ。登録済みなら選ぶだけ。"""

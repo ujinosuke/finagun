@@ -38,7 +38,8 @@ import pandas as pd
 
 from fina_chart import ChartFrame
 from fina_condition import CONDITIONS
-from fina_gather import EXCLUDED_MARKETS, csv_path_for, latest_listed_stocks_csv, load_saved
+from fina_gather import csv_path_for, load_saved
+from fina_stocks import load_listed
 
 # 市場の選択肢(表示名 -> 「市場・商品区分」の先頭の文字)。先頭が最初に選ばれる。
 # 空文字はすべての市場(ETF や REIT も含む。fina_gather.py が取得しない市場は除く)
@@ -118,13 +119,6 @@ def judge(code: str) -> Judgement:
         return Judgement(code, daily.index[-1], float(close.iloc[-1]), float(change), tuple(hits))
     except Exception as e:  # noqa: BLE001  壊れた CSV など、理由を問わず次の銘柄へ進む
         return Judgement(code, error=f"{type(e).__name__}: {e}")
-
-
-def load_listed() -> pd.DataFrame:
-    """最新の銘柄一覧を読み込む(コードが行の名前。fina_gather.py が取得しない市場は除く)。"""
-    listed = pd.read_csv(latest_listed_stocks_csv(), dtype=str, encoding="utf-8-sig")
-    listed = listed[~listed["市場・商品区分"].isin(EXCLUDED_MARKETS)].dropna(subset=["コード"])
-    return listed.set_index("コード")
 
 
 class ScreeningFrame(ttk.Frame):

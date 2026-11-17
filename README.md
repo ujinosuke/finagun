@@ -31,6 +31,8 @@ finagun は、金融・投資系のプログラム集です。
 | `fina_gather.py` | yfinance を使って、銘柄一覧に載っている全銘柄(PRO Market を除く)の日足データを取得する。CSV 形式で保存される。2 回目以降は更新分だけを取得する |
 | `fina_listup_stocks.py` | 東証プライムなどの銘柄一覧データ(`data.xls`)から CSV を生成する |
 | `fina_chart.py` | チャート表示の基本プログラム。matplotlib を使用する |
+| `fina_stocks.py` | 銘柄一覧の読み込みと、銘柄コード・銘柄名での銘柄の検索(GUI を含まない部分) |
+| `fina_widgets.py` | 複数のプログラムで使い回す tkinter の部品(銘柄の検索欄 `StockSearchBox` など) |
 | `fina_strategies.py` | ストラテジーの基本クラスとその種類 |
 | `fina_indicators.py` | インジケーターの基本クラスとその種類 |
 | `fina_oscillators.py` | オシレーターの基本クラスとその種類 |

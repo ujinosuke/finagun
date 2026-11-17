@@ -49,7 +49,8 @@ from matplotlib.patches import FancyArrowPatch, Polygon, Rectangle
 from matplotlib.path import Path as MplPath
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-from fina_gather import csv_path_for, latest_listed_stocks_csv, load_saved
+from fina_gather import csv_path_for, load_saved
+from fina_stocks import load_stock_names
 from fina_indicators import Indicator, SMAEssential3
 from fina_oscillators import OSCILLATORS
 from fina_condition import CONDITIONS
@@ -109,15 +110,6 @@ def resample(daily: pd.DataFrame, rule: str | None) -> pd.DataFrame:
     return grouped.agg(
         {"Date": "first", "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
     ).set_index("Date")
-
-
-def load_stock_names() -> dict[str, str]:
-    """最新の銘柄一覧から、コード -> 銘柄名 の辞書を作る。"""
-    try:
-        listed = pd.read_csv(latest_listed_stocks_csv(), dtype=str, encoding="utf-8-sig")
-    except FileNotFoundError:
-        return {}
-    return dict(zip(listed["コード"], listed["銘柄名"]))
 
 
 def channel_lines(xy: list[tuple[float, float]]):
