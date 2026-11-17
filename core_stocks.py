@@ -1,10 +1,10 @@
 """銘柄一覧の読み込みと、銘柄の検索(GUI を含まない部分)。
 
-listed_stocks フォルダの最新の銘柄一覧 CSV(fina_listup_stocks.py で生成)を読み込む。
+listed_stocks フォルダの最新の銘柄一覧 CSV(core_listup_stocks.py で生成)を読み込む。
 銘柄の検索では、銘柄コードまたは銘柄名の一部で銘柄を探す。
 全角・半角、大文字・小文字、ひらがな・カタカナは区別しない。
 
-検索の入力欄と候補の一覧(tkinter の部品)は、fina_widgets.py の StockSearchBox にある。
+検索の入力欄と候補の一覧(tkinter の部品)は、gui_widgets.py の StockSearchBox にある。
 
 使い方(他のプログラムから):
     listed = load_listed()
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from fina_gather import EXCLUDED_MARKETS, latest_listed_stocks_csv
+from core_gather import EXCLUDED_MARKETS, latest_listed_stocks_csv
 
 MAX_CANDIDATES = 50  # 検索で返す銘柄の最大の数
 
@@ -27,7 +27,7 @@ HIRAGANA_TO_KATAKANA = {c: c + 0x60 for c in range(0x3041, 0x3097)}
 
 
 def load_listed() -> pd.DataFrame:
-    """最新の銘柄一覧を読み込む(コードが行の名前。fina_gather.py が取得しない市場は除く)。"""
+    """最新の銘柄一覧を読み込む(コードが行の名前。core_gather.py が取得しない市場は除く)。"""
     listed = pd.read_csv(latest_listed_stocks_csv(), dtype=str, encoding="utf-8-sig")
     listed = listed[~listed["市場・商品区分"].isin(EXCLUDED_MARKETS)].dropna(subset=["コード"])
     return listed.set_index("コード")

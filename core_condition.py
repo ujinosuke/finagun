@@ -2,14 +2,14 @@
 
 コンディションは「その足で、ある状態が成り立っているか」を判定する。
 インジケーターやオシレーターが数値を返すのに対し、コンディションは状態ごとの真偽を返す。
-fina_chart.py では最下段に色で示し、バックテストやストラテジーでは売買の条件に使える。
+gui_chart.py では最下段に色で示し、バックテストやストラテジーでは売買の条件に使える。
 
 新しいコンディションの作り方:
     1. Condition を継承し、name と states(状態の名前 -> 表示の見た目)を決める
     2. compute() で、足と同じ行・states と同じ列(True / False)の DataFrame を返す。
        説明を出したいときは "note" 列(文字列)も付ける
     3. 判定の根拠をチャートに線で示したいときは、links() も書く
-    4. 下の CONDITIONS に登録する(fina_chart.py の選択肢に出る)
+    4. 下の CONDITIONS に登録する(gui_chart.py の選択肢に出る)
 
 注意: compute() の結果は、その足の時点で分かることだけを使う(未来の足を見ない)。
 バックテストで使ったときに、実際には知り得ない情報で売買したことにならないようにするため。
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from fina_oscillators import RSI
+from core_oscillators import RSI
 
 
 @dataclass(frozen=True)
@@ -177,7 +177,7 @@ class RSIDivergence(Condition):
         return lines
 
 
-# fina_chart.py で選べるコンディション(表示名 -> クラス)。先頭が最初に選ばれる
+# gui_chart.py で選べるコンディション(表示名 -> クラス)。先頭が最初に選ばれる
 CONDITIONS: dict[str, type[Condition]] = {
     "RSIダイバージェンス": RSIDivergence,
 }

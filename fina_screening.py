@@ -1,12 +1,12 @@
 """コンディションが成り立っている銘柄を、全銘柄から探す(スクリーニング)。
 
-fina_condition.py に登録されているすべてのコンディション(CONDITIONS)について、
+core_condition.py に登録されているすべてのコンディション(CONDITIONS)について、
 各銘柄の最新の足(日足)でその状態が成り立っているかを調べる。
 どれか 1 つでも成り立っている銘柄を一覧に出し、どのコンディションが当てはまったかを示す。
-選んだ銘柄のチャートは、右側(fina_chart.py の ChartFrame)に表示する。
+選んだ銘柄のチャートは、右側(gui_chart.py の ChartFrame)に表示する。
 
 株価は取得しない。stock_database フォルダの保存済みデータだけを使うので、
-先に fina_gather.py で全銘柄の株価を最新にしておくこと。
+先に core_gather.py で全銘柄の株価を最新にしておくこと。
 
 使い方:
     python fina_screening.py
@@ -19,7 +19,7 @@ fina_condition.py に登録されているすべてのコンディション(COND
                     「コンディション」で並べ替えると、同じコンディション・状態の銘柄がまとまる
     チャートの表示  一覧の銘柄をクリック、または上下キーで選ぶ。
                     当てはまったコンディションがチャートの最下段に出る(複数あれば先頭のもの)。
-                    チャートの操作は fina_chart.py と同じ
+                    チャートの操作は gui_chart.py と同じ
 
 判定は 1 銘柄ごとに独立しているので、複数のプロセスに分けて同時に行う。
 """
@@ -36,13 +36,13 @@ from tkinter import messagebox, ttk
 
 import pandas as pd
 
-from fina_chart import ChartFrame
-from fina_condition import CONDITIONS
-from fina_gather import csv_path_for, load_saved
-from fina_stocks import load_listed
+from gui_chart import ChartFrame
+from core_condition import CONDITIONS
+from core_gather import csv_path_for, load_saved
+from core_stocks import load_listed
 
 # 市場の選択肢(表示名 -> 「市場・商品区分」の先頭の文字)。先頭が最初に選ばれる。
-# 空文字はすべての市場(ETF や REIT も含む。fina_gather.py が取得しない市場は除く)
+# 空文字はすべての市場(ETF や REIT も含む。core_gather.py が取得しない市場は除く)
 MARKETS = {
     "プライム": "プライム",
     "スタンダード": "スタンダード",
@@ -309,7 +309,7 @@ class ScreeningFrame(ttk.Frame):
     def _summary(self, hit_count: int, judged: list[Judgement], latest: pd.Timestamp | None) -> str:
         """結果のまとめ(該当した銘柄数や、判定できなかった銘柄数)。"""
         if latest is None:
-            return "判定できた銘柄がありません。先に fina_gather.py で株価を取得してください。"
+            return "判定できた銘柄がありません。先に core_gather.py で株価を取得してください。"
         text = f"{latest:%Y-%m-%d} 時点: {hit_count} 銘柄が該当 / 判定 {len(judged)} 銘柄"
         if len(self.results) < self.total:
             text += f"(中止。全 {self.total} 銘柄)"

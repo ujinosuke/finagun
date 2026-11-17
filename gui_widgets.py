@@ -4,7 +4,7 @@ StockSearchBox
     銘柄の検索欄。銘柄コードまたは銘柄名の一部を入力すると、入力欄のすぐ下に候補が出る。
     上下キーで選んで Enter、候補をダブルクリック、またはボタンで、選んだ銘柄を on_pick に渡す。
     空白で区切ると、すべての語を含む銘柄に絞り込む。
-    全角・半角、大文字・小文字、ひらがな・カタカナは区別しない(検索の処理は fina_stocks.py)。
+    全角・半角、大文字・小文字、ひらがな・カタカナは区別しない(検索の処理は core_stocks.py)。
 
 使い方(他のプログラムから):
     index = stock_index(load_listed())
@@ -16,7 +16,7 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import ttk
 
-from fina_stocks import MAX_CANDIDATES, Stock, search_stocks
+from core_stocks import MAX_CANDIDATES, Stock, search_stocks
 
 CANDIDATE_ROWS = 8   # 候補の欄の高さ(行数)
 DROPDOWN_WIDTH = 44  # 重ねて出す候補の欄の幅(文字数)

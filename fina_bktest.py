@@ -1,4 +1,4 @@
-"""バックテスト。ストラテジー(fina_strategies.py / usr_strategies.py)の成績を、保存済みの株価で調べる。
+"""バックテスト。ストラテジー(core_strategies.py / usr_strategies.py)の成績を、保存済みの株価で調べる。
 
 上の欄で、ストラテジー・期間・約定の値を選ぶ(2 つのモードで共通)。モードはタブで切り替える。
 
@@ -10,25 +10,25 @@
     その他は、株価データに異常な値が混じる銘柄があるので、最初はチェックを外してある。
 
 個別銘柄の深掘り
-    1 銘柄でストラテジーを動かし、チャート(fina_chart.py の ChartFrame)に売買ポイント
+    1 銘柄でストラテジーを動かし、チャート(gui_chart.py の ChartFrame)に売買ポイント
     (買い ▲・売り ▼。買いと売りを結ぶ点線は、勝ちが緑、負けが赤)を重ねる。
     チャートの下に、売買の一覧と成績を出す。
     売買をダブルクリック(または選んで Enter)すると、チャートがその売買の位置へ動き、
     利確・損切りの値を横線で示す。
 
 約束ごと:
-    - 約定の値は、上の欄で選ぶ(fina_strategies.FILL_MODES)。手数料は含めない
+    - 約定の値は、上の欄で選ぶ(core_strategies.FILL_MODES)。手数料は含めない
         終値      : ストラテジーが決めた値(初期の実装では判定した足の終値)で売買する
         翌日の始値: 買い・売りを判定した足の、次の足の始値で売買する
     - 期間の始まりより前の買いの合図は使わない。インジケーターは期間より前の足も使って計算する
     - 期間の終わりの足までに売っていない取引は、その足の終値で売ったことにする(理由は「期間終了」)
-    - 同時に持つのは 1 銘柄につき 1 つだけ(fina_strategies.Strategy.trades と同じ)
+    - 同時に持つのは 1 銘柄につき 1 つだけ(core_strategies.Strategy.trades と同じ)
 
 効率: スクリーニングでは、各銘柄の成績(数値いくつか)だけを複数のプロセスで計算し、
 売買の一覧は持たない。売買の一覧は、深掘りで 1 銘柄を調べるときにだけ計算し直す。
 
 株価は取得しない。stock_database フォルダの保存済みデータだけを使うので、
-先に fina_gather.py で株価を最新にしておくこと。
+先に core_gather.py で株価を最新にしておくこと。
 
 使い方:
     python fina_bktest.py
@@ -47,11 +47,11 @@ from tkinter import messagebox, ttk
 
 import pandas as pd
 
-from fina_chart import ChartFrame, TradeMark
-from fina_gather import START_DATE, csv_path_for, load_saved
-from fina_stocks import load_listed, stock_index
-from fina_strategies import FILL_CLOSE, FILL_MODES, Exit, Strategy, Trade, all_strategies
-from fina_widgets import StockSearchBox
+from gui_chart import ChartFrame, TradeMark
+from core_gather import START_DATE, csv_path_for, load_saved
+from core_stocks import load_listed, stock_index
+from core_strategies import FILL_CLOSE, FILL_MODES, Exit, Strategy, Trade, all_strategies
+from gui_widgets import StockSearchBox
 
 # 市場の選択肢(表示名 -> 最初にチェックを入れるか)。「市場・商品区分」の先頭で分け、どれでもなければ「その他」
 MARKETS = {
@@ -544,7 +544,7 @@ class DetailTab(ttk.Frame):
             return
         bars = load_bars(code)
         if bars is None:
-            self.status_var.set(f"{code} の株価データがありません。先に python fina_gather.py {code} を実行してください。")
+            self.status_var.set(f"{code} の株価データがありません。先に python core_gather.py {code} を実行してください。")
             return
         strategy = self.app.strategies[settings.strategy]()
         self.code = code

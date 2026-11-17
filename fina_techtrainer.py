@@ -15,7 +15,7 @@
     - 終わりの足で保有していれば、その足の終値で売ったことにする(理由は「終了時決済」)
 
 ストラテジーの買い場・売り場まで進める:
-    設定で選んだストラテジー(fina_strategies.py / usr_strategies.py)が買い(売り)の合図を出す足まで、
+    設定で選んだストラテジー(core_strategies.py / usr_strategies.py)が買い(売り)の合図を出す足まで、
     時間を進める。売買は自分で行う(進めるだけ)。
     買い場は、ストラテジーの買いの合図(entries)。売り場は、ストラテジー自身が取引したときの売りの日(trades)。
     合図がもうない(終わりまで進むことになる)ときは、終わりまで進めて終了してよいかを尋ねる。
@@ -31,10 +31,10 @@
     1 日進む  「1日 ▶」ボタン、または → キー(「5日 ▶▶」で 5 日)
     買う      「買う」ボタン、または B キー
     売る      「売る」ボタン、または S キー
-    チャート  拡大・縮小・スクロール・図形の描画は fina_chart.py と同じ
+    チャート  拡大・縮小・スクロール・図形の描画は gui_chart.py と同じ
 
 株価は取得しない。stock_database フォルダの保存済みデータだけを使うので、
-先に fina_gather.py で株価を取得しておくこと。
+先に core_gather.py で株価を取得しておくこと。
 
 使い方:
     python fina_techtrainer.py
@@ -54,11 +54,11 @@ import pandas as pd
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
-from fina_chart import BUY_COLOR, DOWN_COLOR, SELL_COLOR, UP_COLOR, ChartFrame, TradeMark
-from fina_gather import BASE_DIR, csv_path_for, load_saved
-from fina_stocks import load_listed, stock_index
-from fina_strategies import FILL_MODES, Strategy, all_strategies
-from fina_widgets import StockSearchBox
+from gui_chart import BUY_COLOR, DOWN_COLOR, SELL_COLOR, UP_COLOR, ChartFrame, TradeMark
+from core_gather import BASE_DIR, csv_path_for, load_saved
+from core_stocks import load_listed, stock_index
+from core_strategies import FILL_MODES, Strategy, all_strategies
+from gui_widgets import StockSearchBox
 
 DEFAULT_SHARES = 100
 SHARES_STEP = 100
@@ -550,7 +550,7 @@ class TrainerFrame(ttk.Frame):
             return
         daily = load_saved(csv_path_for(code))
         if daily is None or len(daily.dropna()) <= MIN_HISTORY:
-            self.message_var.set(f"{code} の株価データがない、または短すぎます。先に python fina_gather.py {code} を実行してください。")
+            self.message_var.set(f"{code} の株価データがない、または短すぎます。先に python core_gather.py {code} を実行してください。")
             return
         self.code, self.daily = code, daily.dropna()
         self.stock_var.set(f"{code} {self.stock_name(code)}")

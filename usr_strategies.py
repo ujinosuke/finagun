@@ -2,8 +2,8 @@
 
 このファイルは、利用者が自分のストラテジーを書き足すためのものです。
 プログラムを書かなくても、AI(Claude Code など)に下の「AI への指令の仕方」のとおりに頼めば作れます。
-ここに登録したストラテジーは、fina_strategies.py の組み込みのストラテジーと同じように
-fina_bktest.py で使えます(fina_strategies.all_strategies() が両方を集めます)。
+ここに登録したストラテジーは、core_strategies.py の組み込みのストラテジーと同じように
+fina_bktest.py で使えます(core_strategies.all_strategies() が両方を集めます)。
 
 ======================================================================
 AI への指令の仕方
@@ -26,7 +26,7 @@ usr_strategies.py にストラテジーを 1 つ追加してください。
 使う株価  : 終値  ← 高値・安値・始値を使うときだけ書き換える
 足        : 日足
 
-作ったら python fina_strategies.py 7203 <名前> で動かし、取引の一覧を見せてください。
+作ったら python core_strategies.py 7203 <名前> で動かし、取引の一覧を見せてください。
 ----------------------------------------------------------------------
 
 頼み方のこつ:
@@ -36,18 +36,18 @@ usr_strategies.py にストラテジーを 1 つ追加してください。
     - 「直近高値」「サポート」のように人によって意味が違う言葉は、決め方も書く
       (例: 直近高値 = 左右 5 本より終値が高い足のうち、一番最近のもの)
     - 期間や % などの数値は、後から変えたいものとして伝える(AI がクラスの定数にします)
-    - できあがったら、取引の一覧で、合図の日がチャート(python fina_chart.py 7203)と
+    - できあがったら、取引の一覧で、合図の日がチャート(python gui_chart.py 7203)と
       合っているかを確かめる。違っていたら、どの日がどう違うかを AI に伝えて直してもらう
 
 ======================================================================
 設計の手順(AI と、プログラムを書く人向け)
 ======================================================================
 
-1. fina_strategies.Strategy を継承したクラスを作る
-       name        短い名前(英数字と記号)。fina_strategies.STRATEGIES の名前と重ねない
+1. core_strategies.Strategy を継承したクラスを作る
+       name        短い名前(英数字と記号)。core_strategies.STRATEGIES の名前と重ねない
        description 売買のルールを 1 行で
        docstring   買い・見送り・利確・損切り・その他の売りのルールを、数値も含めて日本語で書く
-2. entries(bars) を書き、買いの合図(fina_strategies.Entry)を日付の古い順のリストで返す
+2. entries(bars) を書き、買いの合図(core_strategies.Entry)を日付の古い順のリストで返す
        Entry(index, date, price, take_profit, stop_loss, note)
        index / date      買う足の行番号と日付
        price             買値。断りがなければ、その足の終値
@@ -56,19 +56,19 @@ usr_strategies.py にストラテジーを 1 つ追加してください。
        note              買った理由など(表示用。なくてもよい)
 3. 売りが「終値が take_profit 以上で利確、stop_loss 以下で損切り」だけなら、exit_on() は書かない。
    日数で売る・指標で売るなど、ほかの売り方があるときは exit_on(entry, bars, i) を上書きし、
-   売るなら fina_strategies.Exit(index, date, price, reason) を、売らないなら None を返す。
+   売るなら core_strategies.Exit(index, date, price, reason) を、売らないなら None を返す。
    利確・損切りも続けて使うときは、最後に super().exit_on(entry, bars, i) を返す
 4. 下の USER_STRATEGIES に登録する
-5. python fina_strategies.py <銘柄コード> <名前> で取引の一覧を表示して確かめる
+5. python core_strategies.py <銘柄コード> <名前> で取引の一覧を表示して確かめる
 
 使える部品(新しく作る前に、まずこれらを使う):
-    fina_indicators.sma(series, period)              単純移動平均
-    fina_oscillators.RSI().compute(bars)["RSI"]      RSI(14)
-    fina_condition.pivots(series, left, right, find_high)
+    core_indicators.sma(series, period)              単純移動平均
+    core_oscillators.RSI().compute(bars)["RSI"]      RSI(14)
+    core_condition.pivots(series, left, right, find_high)
                                                      山・谷の行番号の一覧(右 right 本後に確定)
-    fina_strategies.recent_high_above(close, i, price, left, right, lookback)
+    core_strategies.recent_high_above(close, i, price, left, right, lookback)
                                                      i 本目の時点で確定している、price より高い直近の山
-    fina_condition.CONDITIONS                        コンディション(RSI ダイバージェンスなど)
+    core_condition.CONDITIONS                        コンディション(RSI ダイバージェンスなど)
 
 約束ごと(必ず守る):
     - 買いのみ(レバレッジなし)。売りから入る取引は作らない
@@ -78,7 +78,7 @@ usr_strategies.py にストラテジーを 1 つ追加してください。
       山・谷は、右側の本数が出そろった足から使う
     - 計算に必要な本数がそろわない最初の足(SMA200 なら最初の 199 本)では合図を出さない
     - 期間・閾値・% などの数値は、クラスの定数(大文字の名前)にして、意味をコメントに書く
-    - 変えるのはこのファイルだけ。fina_strategies.py などの共通のファイルを変える必要があるときは、
+    - 変えるのはこのファイルだけ。core_strategies.py などの共通のファイルを変える必要があるときは、
       変えずに、何をどう変えたいかを利用者に伝える
     - 説明やコメントは日本語で書く
 
@@ -112,7 +112,7 @@ import math  # noqa: F401  ストラテジーで math.inf などを使うとき�
 
 import pandas as pd  # noqa: F401
 
-from fina_strategies import Entry, Exit, Strategy  # noqa: F401
+from core_strategies import Entry, Exit, Strategy  # noqa: F401
 
 
 # ここにストラテジーのクラスを書く

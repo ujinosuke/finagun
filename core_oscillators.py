@@ -1,18 +1,18 @@
 """オシレーターの基本クラスとその種類。
 
-オシレーターは、価格チャートとは別の枠(fina_chart.py では下段)に表示するインジケーター。
-fina_indicators.Indicator を継承し、計算(compute)と線の見た目(lines)の決まりは同じ。
+オシレーターは、価格チャートとは別の枠(gui_chart.py では下段)に表示するインジケーター。
+core_indicators.Indicator を継承し、計算(compute)と線の見た目(lines)の決まりは同じ。
 それに加えて、縦軸の範囲(ylim)と基準線(levels)を持つ。
 
 新しいオシレーターの作り方:
     1. Oscillator を継承し、name・lines・ylim・levels を決めて compute() を書く
-    2. 下の OSCILLATORS に登録する(fina_chart.py の選択肢に出る)
+    2. 下の OSCILLATORS に登録する(gui_chart.py の選択肢に出る)
 """
 
 import numpy as np
 import pandas as pd
 
-from fina_indicators import Indicator, LineStyle, sma
+from core_indicators import Indicator, LineStyle, sma
 
 
 class Oscillator(Indicator):
@@ -72,7 +72,7 @@ class RSI(Oscillator):
         return pd.DataFrame({"RSI": rsi, "RSI_SMA14": sma(rsi, self.MA_PERIOD)})
 
 
-# fina_chart.py で選べるオシレーター(表示名 -> クラス)。先頭が最初に選ばれる
+# gui_chart.py で選べるオシレーター(表示名 -> クラス)。先頭が最初に選ばれる
 OSCILLATORS: dict[str, type[Oscillator]] = {
     "RSI": RSI,
 }

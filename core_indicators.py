@@ -1,7 +1,7 @@
 """インジケーターの基本クラスとその種類。
 
-インジケーターは「計算」と「線の見た目」だけを受け持ち、描画は fina_chart.py などの表示側が行う。
-バックテスト(fina_bktest.py)やストラテジー(fina_strategies.py)からも、compute() で値だけを使える。
+インジケーターは「計算」と「線の見た目」だけを受け持ち、描画は gui_chart.py などの表示側が行う。
+バックテスト(fina_bktest.py)やストラテジー(core_strategies.py)からも、compute() で値だけを使える。
 
 新しいインジケーターの作り方:
     1. Indicator を継承する

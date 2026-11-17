@@ -1,6 +1,6 @@
 """株価チャートのウォッチリスト。銘柄をグループに分けて登録し、チャートを見て回る。
 
-左側にグループと銘柄の一覧、右側にチャート(fina_chart.py の ChartFrame)を表示する。
+左側にグループと銘柄の一覧、右側にチャート(gui_chart.py の ChartFrame)を表示する。
 グループはいくつでも作れ、1 つのグループに複数の銘柄を登録できる
 (同じ銘柄を複数のグループに登録してもよい)。
 
@@ -9,7 +9,7 @@
 保存は、登録内容を変えたとき・銘柄を選んだとき・ウィンドウを閉じるときに行う。
 
 株価は取得しない。stock_database フォルダの保存済みデータだけを使うので、
-先に fina_gather.py で株価を取得しておくこと。
+先に core_gather.py で株価を取得しておくこと。
 
 使い方:
     python fina_watchlist.py
@@ -21,7 +21,7 @@
                     空白で区切ると、すべての語を含む銘柄に絞り込む。
                     全角・半角、大文字・小文字、ひらがな・カタカナは区別しない
     チャートの表示  一覧の銘柄をクリック、または上下キーで選ぶ。
-                    チャートの操作は fina_chart.py と同じ
+                    チャートの操作は gui_chart.py と同じ
     並べ替え        銘柄を選んで「↑」「↓」ボタン
     銘柄の削除      銘柄を選んで「削除」ボタン、または Delete キー(図形は残る)
 """
@@ -33,10 +33,10 @@ import sys
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from fina_chart import ChartFrame
-from fina_gather import BASE_DIR, csv_path_for, load_saved
-from fina_stocks import load_listed, stock_index
-from fina_widgets import StockSearchBox
+from gui_chart import ChartFrame
+from core_gather import BASE_DIR, csv_path_for, load_saved
+from core_stocks import load_listed, stock_index
+from gui_widgets import StockSearchBox
 
 WATCHLIST_PATH = BASE_DIR / "watchlist.json"
 FORMAT_VERSION = 1
@@ -334,7 +334,7 @@ class WatchlistFrame(ttk.Frame):
             # チャートを表示できないので、前の銘柄のままにして理由を出す
             self.status_var.set(
                 f"{code} {self._stock_name(code)} の株価データがありません。\n"
-                f"先に python fina_gather.py {code} を実行してください。",
+                f"先に python core_gather.py {code} を実行してください。",
             )
         elif code != self.chart.code:
             self.chart.set_code(code)

@@ -36,8 +36,8 @@ Yahoo に値がないときは「—」を出す(赤字で PER がない、無�
                 数値は数値のセルとして入れ(時価総額は億円、配当利回りは % の表示形式)、
                 一番高い値は赤い文字にする
     更新        「更新」ボタンで、すべての銘柄の指標を取り直す
-    チャート    行をダブルクリック(または選んで Enter)で、その銘柄のチャート(fina_chart.py)を
-                別のウィンドウで開く。株価は stock_database フォルダの保存済みデータ(fina_gather.py で取得)を使う。
+    チャート    行をダブルクリック(または選んで Enter)で、その銘柄のチャート(gui_chart.py)を
+                別のウィンドウで開く。株価は stock_database フォルダの保存済みデータ(core_gather.py で取得)を使う。
                 チャートに描いた図形は保存しない
 """
 
@@ -59,10 +59,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from fina_chart import ChartFrame
-from fina_gather import BASE_DIR, csv_path_for
-from fina_stocks import load_listed, stock_index
-from fina_widgets import StockSearchBox
+from gui_chart import ChartFrame
+from core_gather import BASE_DIR, csv_path_for
+from core_stocks import load_listed, stock_index
+from gui_widgets import StockSearchBox
 
 COMPARE_PATH = BASE_DIR / "compare.json"
 FORMAT_VERSION = 1
@@ -503,7 +503,7 @@ class CompareFrame(ttk.Frame):
             self.open_chart(self.tree.identify_row(event.y))
 
     def open_chart(self, code: str) -> None:
-        """銘柄のチャート(fina_chart.py の ChartFrame)を別のウィンドウで開く。開いていれば前に出す。"""
+        """銘柄のチャート(gui_chart.py の ChartFrame)を別のウィンドウで開く。開いていれば前に出す。"""
         if code not in self.codes:  # 集計の行など
             return
         window = self.chart_windows.get(code)
@@ -516,7 +516,7 @@ class CompareFrame(ttk.Frame):
             # 空のウィンドウを開かないよう、先に確かめて理由を出す
             self.status_var.set(
                 f"{f'{code} {self._stock_name(code)}'.strip()} の株価データがありません。"
-                f"先に python fina_gather.py {code} を実行してください。",
+                f"先に python core_gather.py {code} を実行してください。",
             )
             return
         window = tk.Toplevel(self)

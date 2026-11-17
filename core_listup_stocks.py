@@ -5,8 +5,8 @@ listed_stocks フォルダにある Excel ファイル(例: T2610.xlsx)を読み
 同じ名前の CSV ファイルが既にある場合は、その Excel ファイルの処理をスキップする。
 
 使い方:
-    python fina_listup_stocks.py              # listed_stocks 内の全 Excel ファイルを変換
-    python fina_listup_stocks.py T2610.xlsx   # 指定したファイルだけを変換
+    python core_listup_stocks.py              # listed_stocks 内の全 Excel ファイルを変換
+    python core_listup_stocks.py T2610.xlsx   # 指定したファイルだけを変換
 """
 
 import sys

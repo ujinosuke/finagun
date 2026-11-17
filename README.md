@@ -34,18 +34,27 @@ ToreCan は、金融・投資系のプログラム集です。
 
 ### 裏方のプログラム
 
+接頭語で 2 つに分けています。
+
+#### フォーム系(`gui_`)… 複数のプログラムで使う tkinter の画面部品
+
 | ファイル | 内容 |
 |---|---|
-| `fina_gather.py` | yfinance を使って、銘柄一覧に載っている全銘柄(PRO Market を除く)の日足データを取得する。CSV 形式で保存される。2 回目以降は更新分だけを取得する |
-| `fina_listup_stocks.py` | 東証プライムなどの銘柄一覧データ(`data.xls`)から CSV を生成する |
-| `fina_chart.py` | チャート表示の基本プログラム。matplotlib を使用する |
-| `fina_stocks.py` | 銘柄一覧の読み込みと、銘柄コード・銘柄名での銘柄の検索(GUI を含まない部分) |
-| `fina_widgets.py` | 複数のプログラムで使い回す tkinter の部品(銘柄の検索欄 `StockSearchBox` など) |
-| `fina_strategies.py` | ストラテジーの基本クラスとその種類 |
-| `fina_indicators.py` | インジケーターの基本クラスとその種類 |
-| `fina_oscillators.py` | オシレーターの基本クラスとその種類 |
-| `fina_condition.py` | 状態の基本クラスとその種類 |
-| `fina_anomalies.py` | アノーマリーの基本クラスとその種類 |
+| `gui_chart.py` | チャート表示の基本プログラム。matplotlib を使用する |
+| `gui_widgets.py` | 複数のプログラムで使い回す tkinter の部品(銘柄の検索欄 `StockSearchBox` など) |
+
+#### 計算系(`core_`)… 画面を持たない、計算・データの処理
+
+| ファイル | 内容 |
+|---|---|
+| `core_gather.py` | yfinance を使って、銘柄一覧に載っている全銘柄(PRO Market を除く)の日足データを取得する。CSV 形式で保存される。2 回目以降は更新分だけを取得する |
+| `core_listup_stocks.py` | 東証プライムなどの銘柄一覧データ(`data.xls`)から CSV を生成する |
+| `core_stocks.py` | 銘柄一覧の読み込みと、銘柄コード・銘柄名での銘柄の検索(GUI を含まない部分) |
+| `core_strategies.py` | ストラテジーの基本クラスとその種類 |
+| `core_indicators.py` | インジケーターの基本クラスとその種類 |
+| `core_oscillators.py` | オシレーターの基本クラスとその種類 |
+| `core_condition.py` | 状態の基本クラスとその種類 |
+| `core_anomalies.py` | アノーマリーの基本クラスとその種類 |
 
 ## ユーザー編集可能なプログラム
 
@@ -57,7 +66,7 @@ ToreCan は、金融・投資系のプログラム集です。
 
 | フォルダ | 内容 |
 |---|---|
-| `listed_stocks/` | 銘柄一覧。毎月更新する。例: `T2610.xls`(東証 2026 年 10 月の銘柄)。この xls から `fina_listup_stocks.py` で生成した CSV も置く |
+| `listed_stocks/` | 銘柄一覧。毎月更新する。例: `T2610.xls`(東証 2026 年 10 月の銘柄)。この xls から `core_listup_stocks.py` で生成した CSV も置く |
 | `stock_database/` | 各銘柄ごとの CSV ファイル(例: `T7203.csv`)。2016 年 1 月以降の日足データ(OHLCV) |
 
 ## 必要環境
@@ -81,13 +90,13 @@ python ToreCan.py            # ホーム画面
 python fina_asset.py         # 資産管理
 python fina_bktest.py        # バックテスト
 python fina_techtrainer.py   # テクニカルトレードの訓練
-python fina_screening.py     # スクリーニング(先に fina_gather.py で株価を最新にしておく)
+python fina_screening.py     # スクリーニング(先に core_gather.py で株価を最新にしておく)
 python fina_watchlist.py     # ウォッチリスト(登録内容はルートの watchlist.json に保存される)
 python fina_compare.py       # 銘柄の比較表(登録内容はルートの compare.json に保存される)
-python fina_listup_stocks.py # 銘柄一覧の CSV 生成
-python fina_gather.py        # 銘柄情報の取得
-python fina_chart.py 7203    # チャートの表示(銘柄コードを指定)
-python fina_strategies.py 7203  # ストラテジーの取引の一覧(動作の確認用。ストラテジー名も指定できる)
+python core_listup_stocks.py # 銘柄一覧の CSV 生成
+python core_gather.py        # 銘柄情報の取得
+python gui_chart.py 7203    # チャートの表示(銘柄コードを指定)
+python core_strategies.py 7203  # ストラテジーの取引の一覧(動作の確認用。ストラテジー名も指定できる)
 ```
 
 ## 免責事項

@@ -8,8 +8,8 @@ listed_stocks フォルダの最新の銘柄一覧 CSV(例: T2610.csv)に載っ�
 速く取得するため、複数の銘柄をまとめて(BATCH_SIZE 銘柄ずつ)yfinance に問い合わせる。
 
 使い方:
-    python fina_gather.py              # 銘柄一覧の全銘柄を取得・更新
-    python fina_gather.py 7203 6758    # 指定した銘柄だけを取得・更新
+    python core_gather.py              # 銘柄一覧の全銘柄を取得・更新
+    python core_gather.py 7203 6758    # 指定した銘柄だけを取得・更新
 """
 
 import logging
@@ -52,7 +52,7 @@ def latest_listed_stocks_csv() -> Path:
     if not csv_files:
         raise FileNotFoundError(
             f"銘柄一覧の CSV がありません: {LISTED_STOCKS_DIR}"
-            "(先に fina_listup_stocks.py を実行してください)"
+            "(先に core_listup_stocks.py を実行してください)"
         )
     return csv_files[-1]
 

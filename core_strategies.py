@@ -30,9 +30,9 @@ fina_bktest.py は、各銘柄の trades() を集めて成績を出す。
     利用者が自分で作るストラテジーは、このファイルではなく usr_strategies.py に書く。
 
 使い方(動作の確認):
-    python fina_strategies.py                 # 登録されているストラテジーの一覧
-    python fina_strategies.py 7203            # 7203 で全ストラテジーの取引を表示
-    python fina_strategies.py 7203 GC75-200   # ストラテジーを指定
+    python core_strategies.py                 # 登録されているストラテジーの一覧
+    python core_strategies.py 7203            # 7203 で全ストラテジーの取引を表示
+    python core_strategies.py 7203 GC75-200   # ストラテジーを指定
 """
 
 import math
@@ -42,9 +42,9 @@ from dataclasses import dataclass, replace
 
 import pandas as pd
 
-from fina_condition import pivots
-from fina_gather import csv_path_for, load_saved
-from fina_indicators import sma
+from core_condition import pivots
+from core_gather import csv_path_for, load_saved
+from core_indicators import sma
 
 
 # 約定の値の選び方(名前 -> 表示名)
@@ -175,7 +175,7 @@ def next_open(bars: pd.DataFrame, i: int) -> float:
 def recent_high_above(close: pd.Series, i: int, price: float, left: int, right: int, lookback: int):
     """i 本目の時点で確定している山(終値)のうち、price より高く、i に一番近いものを返す。
 
-    山は左 left 本・右 right 本より高い足(fina_condition.pivots と同じ)。
+    山は左 left 本・右 right 本より高い足(core_condition.pivots と同じ)。
     右 right 本が出そろって確定するので、使えるのは i - right 本目までの山。
     lookback 本前より古い山は探さない。見つからなければ None。
     戻り値は (山の行番号, 山の終値)。
@@ -262,11 +262,11 @@ def main() -> int:
     names = sys.argv[2:] or list(strategies)
     unknown = [n for n in names if n not in strategies]
     if unknown:
-        print(f"ストラテジーがありません: {', '.join(unknown)}(一覧: python fina_strategies.py)")
+        print(f"ストラテジーがありません: {', '.join(unknown)}(一覧: python core_strategies.py)")
         return 1
     bars = load_saved(csv_path_for(code))
     if bars is None:
-        print(f"{code} のデータがありません。先に python fina_gather.py {code} を実行してください。")
+        print(f"{code} のデータがありません。先に python core_gather.py {code} を実行してください。")
         return 1
     bars = bars.dropna(subset=["Close"])
     for name in names:

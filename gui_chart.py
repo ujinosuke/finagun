@@ -1,14 +1,14 @@
 """ローソク足チャートを表示する(チャート表示の基本プログラム)。
 
-stock_database フォルダの日足データ(fina_gather.py で取得)を読み込み、
+stock_database フォルダの日足データ(core_gather.py で取得)を読み込み、
 ローソク足を表示する。陽線は緑、陰線は赤で描く。
-移動平均線(SMA 20/75/200、fina_indicators.SMAEssential3)を常に重ねて表示する。
-下段には出来高、オシレーター(fina_oscillators.py)、コンディション(fina_condition.py)を表示でき、
+移動平均線(SMA 20/75/200、core_indicators.SMAEssential3)を常に重ねて表示する。
+下段には出来高、オシレーター(core_oscillators.py)、コンディション(core_condition.py)を表示でき、
 それぞれ表示・非表示を選べる。
 
 使い方:
-    python fina_chart.py 7203    # 7203.T のチャートを表示
-    python fina_chart.py         # 起動後に画面で銘柄コードを入力
+    python gui_chart.py 7203    # 7203.T のチャートを表示
+    python gui_chart.py         # 起動後に画面で銘柄コードを入力
 
 操作:
     銘柄の変更      銘柄欄に銘柄コードまたは銘柄名の一部を入力すると、候補が出る。
@@ -55,12 +55,12 @@ from matplotlib.patches import FancyArrowPatch, Polygon, Rectangle
 from matplotlib.path import Path as MplPath
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-from fina_gather import csv_path_for, load_saved
-from fina_stocks import load_listed, load_stock_names, stock_index
-from fina_widgets import StockSearchBox
-from fina_indicators import Indicator, SMAEssential3
-from fina_oscillators import OSCILLATORS
-from fina_condition import CONDITIONS
+from core_gather import csv_path_for, load_saved
+from core_stocks import load_listed, load_stock_names, stock_index
+from gui_widgets import StockSearchBox
+from core_indicators import Indicator, SMAEssential3
+from core_oscillators import OSCILLATORS
+from core_condition import CONDITIONS
 
 # チャート内の日本語(凡例など)を表示できるフォント。先頭から順に、見つかったものを使う
 matplotlib.rcParams["font.family"] = ["Yu Gothic", "Meiryo", "MS Gothic", "sans-serif"]
@@ -402,8 +402,8 @@ class ChartFrame(ttk.Frame):
         daily = load_saved(csv_path_for(code))
         if daily is None:
             messagebox.showerror(
-                "fina_chart",
-                f"{code} のデータがありません。\n先に python fina_gather.py {code} を実行してください。",
+                "gui_chart",
+                f"{code} のデータがありません。\n先に python core_gather.py {code} を実行してください。",
                 parent=self,
             )
             return
