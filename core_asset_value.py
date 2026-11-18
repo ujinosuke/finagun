@@ -230,6 +230,8 @@ class OverviewItem:
     value: float                   # 評価額(円)
     unrealized_pct: float | None   # 含み損益率(%)
     change_pct: float | None       # 前日比(%)
+    quantity: float = 0.0          # 保有数(全証券会社・口座の合計)
+    cost: float = 0.0              # 取得原価(円)
 
 
 @dataclass(frozen=True)
@@ -244,16 +246,17 @@ class AssetOverview:
 
 def overview_items(valuations: list[Valuation]) -> list[OverviewItem]:
     """評価を銘柄ごとに合算する(評価額のない保有は除く)。"""
-    merged: dict[str, list] = {}  # 商品 ID -> [評価、評価額、取得原価]
+    merged: dict[str, list] = {}  # 商品 ID -> [評価、評価額、取得原価、保有数]
     for v in valuations:
         if v.value_jpy is None:
             continue
-        item = merged.setdefault(v.instrument.id, [v, 0.0, 0.0])
+        item = merged.setdefault(v.instrument.id, [v, 0.0, 0.0, 0.0])
         item[1] += v.value_jpy
         item[2] += v.cost_jpy
+        item[3] += v.holding.quantity
     return [
-        OverviewItem(v.instrument, value, (value - cost) / cost * 100 if cost else None, v.change_pct)
-        for v, value, cost in merged.values()
+        OverviewItem(v.instrument, value, (value - cost) / cost * 100 if cost else None, v.change_pct, quantity, cost)
+        for v, value, cost, quantity in merged.values()
     ]
 
 

@@ -195,8 +195,8 @@ class IconRail(tk.Frame):
                             lambda hover: home.show_hint("設定: 色の決まり・ベンチマーク・データフォルダ" if hover else ""))
         settings.pack(side="bottom", fill="x", pady=(0, PAD))
 
-    def launch(self, program: Program) -> None:
-        """プログラムを別のプロセスで起動する。"""
+    def launch(self, program: Program, args: tuple[str, ...] = ()) -> None:
+        """プログラムを別のプロセスで起動する。args は起動時の引数(例: ("--group", "保有資産"))。"""
         if program.single and self.running[program.key]:
             self.home.set_message(f"{program.label}はすでに起動しています(2 つ開くと、保存で互いの変更を上書きするため)。")
             return
@@ -207,7 +207,7 @@ class IconRail(tk.Frame):
         python, flags = python_for_gui()
         try:
             process = subprocess.Popen(
-                [python, str(APP_DIR / program.script)], cwd=APP_DIR, stdout=log, stderr=subprocess.STDOUT,
+                [python, str(APP_DIR / program.script), *args], cwd=APP_DIR, stdout=log, stderr=subprocess.STDOUT,
                 creationflags=flags,
             )
         except OSError as e:
@@ -526,6 +526,11 @@ class AssetCard:
         self.checked = 0.0
         font = fonts(parent)
         self.card, header, body = make_card(parent, "資産", "asset")
+        # 銘柄比較を、保有資産のグループを選んだ状態で開く
+        compare = next(p for p in PROGRAMS if p.key == "compare")
+        ttk.Button(header, text=" 保有資産を比較", image=icon("compare", 24, "accent") or "", compound="left",
+                   style="CardIcon.TButton",
+                   command=lambda: home.rail.launch(compare, ("--group", "保有資産"))).pack(side="right")
         ttk.Label(body, text="総資産", style="CardMuted.TLabel").pack(side="top", anchor="w")
         self.total_label = ttk.Label(body, text="―", style="Card.TLabel", font=(font["title"][0], 18, "bold"))
         self.total_label.pack(side="top", anchor="w")

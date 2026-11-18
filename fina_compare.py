@@ -28,14 +28,23 @@
 株価データの中に、数日だけ桁の違う値(分割の調整の誤りなど)があると、その日を除いて計算する
 (除いた日は、下のお知らせ欄に出す)。
 
+銘柄はグループに分けて登録する(ウォッチリストとは別に持つ)。グループはいくつでも作れる。
+一番上の「保有資産(自動)」は固定のグループで、資産管理(asset.json)で今保有している日本株が、
+評価額の大きい順に自動で入る(全証券会社・口座をまとめる。銘柄の追加・削除は資産管理で行う)。
+保有資産のときは、比較表に「保有」の列(保有数・評価額・構成比・含み損益率)も出せる。
+仕様は compare-groups-spec.md。
+
 登録した銘柄と表示の設定は、ルートディレクトリの compare.json に保存し、次回の起動時に自動で読み込む。
 ベンチマークと相関の期間は、全プログラム共通の settings.json に保存する(ToreCan のホームの設定と同じ値)。
 
 使い方:
-    python fina_compare.py              # 前回の銘柄で起動
-    python fina_compare.py 7203 7267    # 指定した銘柄を追加して起動
+    python fina_compare.py                    # 前回のグループで起動
+    python fina_compare.py 7203 7267          # 指定した銘柄を、選んでいるグループに追加して起動
+                                              # (保有資産を選んでいるときは、先頭のふつうのグループに追加)
+    python fina_compare.py --group 保有資産   # グループを選んで起動
 
 操作:
+    グループ    上の欄で選ぶ。「新規」「名前変更」「削除」で編集する(保有資産は編集できない)
     銘柄の登録  「銘柄の追加」欄に銘柄コードまたは銘柄名の一部を入力すると、候補が出る。
                 上下キーで選んで Enter、または候補をダブルクリックで登録する
     並べ替え    見出しをクリック(もう一度クリックで逆順)。集計の 4 行は常に最後
@@ -62,7 +71,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import numpy as np
 import yfinance as yf
@@ -73,12 +82,14 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from gui_theme import apply_theme
-from core_settings import app_title, load_settings, settings_exist, update_settings
+from core_settings import app_title, load_settings, profit_colors, settings_exist, update_settings
 from core_compare import (
     BENCHMARKS, CORRELATION_PERIODS, ITEMS, Correlation, Financials, FinancialsCache, TechMetrics,
     aligned_years, beta, cagr, correlation_matrix, drop_glitches, fetch_financials, growth, indexed,
     technical_metrics,
 )
+from core_asset import ASSET_PATH, AssetClass, AssetStore, build_ledger
+from core_asset_value import PriceBook, value_all
 from core_gather import BASE_DIR, csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from gui_chart import ChartFrame  # gui_chart を読み込むと、matplotlib の日本語フォントも設定される
@@ -87,7 +98,7 @@ from gui_widgets import SortableTree, StockSearchBox
 
 APP_NAME = "fina_compare"
 COMPARE_PATH = BASE_DIR / "compare.json"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # 2: グループを持つ(1 は codes だけ)
 WORKERS = 4          # 指標・業績を同時に取得する銘柄数
 POLL_INTERVAL = 100  # 取得結果を画面に反映する間隔(ミリ秒)
 MISSING = "—"        # 値がないときの表示
@@ -139,14 +150,26 @@ METRICS = {
 }
 # テクニカルの列(保存済みの日足から計算する)。集計の 4 行はマイナスも含めて出す。赤い文字は付けない
 TECH_COLUMNS = list(COLUMNS)[len(BASE_COLUMNS) + len(METRICS):]
+# 保有の列(保有資産のグループのときだけ出す)。列の名前 -> (見出し、幅、文字の寄せ方)
+HOLDING_COLUMNS = {
+    "hold_qty": ("保有数", 80, "e"),
+    "hold_value": ("評価額(円)", 110, "e"),
+    "hold_weight": ("構成比", 70, "e"),
+    "hold_unrealized": ("含み損益率", 90, "e"),
+}
 # 列のグループ(グループの名前 -> (表示名、列))
 COLUMN_GROUPS = {
     "valuation": ("バリュエーション", list(METRICS)),
     "returns": ("騰落率", ["ret_1m", "ret_3m", "ret_6m", "ret_1y"]),
     "trend": ("トレンド", ["high52", "low52", "dev25", "dev75", "dev200"]),
     "motion": ("値動き", ["rsi14", "vol20", "vol60", "atr14", "beta", "turnover20"]),
+    "holding": ("保有", list(HOLDING_COLUMNS)),  # 保有資産のグループのときだけ
 }
-DEFAULT_GROUPS = ["valuation", "returns", "trend"]  # 「値動き」は最初は隠す
+DEFAULT_GROUPS = ["valuation", "returns", "trend", "holding"]  # 「値動き」は最初は隠す
+COLUMNS |= HOLDING_COLUMNS  # 表の列には常に持ち、表示するかは表示する列(displaycolumns)で決める
+HOLDINGS_GROUP = "保有資産"         # 固定のグループの名前(保存しない)
+HOLDINGS_LABEL = "保有資産(自動)"   # グループの欄での表示
+DEFAULT_GROUP_NAME = "比較リスト"   # 前の版の銘柄を入れるグループ、ふつうのグループがないときに作るグループ
 SIGNED_PERCENT = {"ret_1m", "ret_3m", "ret_6m", "ret_1y", "dev25", "dev75", "dev200"}  # +1.23% の形
 PERCENT = {"high52", "low52", "vol20", "vol60", "atr14"}                               # 1.23% の形
 # 集計の行(行の名前 -> 計算のしかた)
@@ -184,6 +207,8 @@ EXCEL_FORMATS = {
     "high52": ("0.0%", 12), "low52": ("0.0%", 12),
     "rsi14": ("0.0", 9), "vol20": ("0.0%", 10), "vol60": ("0.0%", 10), "atr14": ("0.00%", 10),
     "beta": ("0.00", 8), "turnover20": ("#,##0", 16),
+    "hold_qty": ("#,##0", 9), "hold_value": ("#,##0", 13), "hold_weight": ("0.0%", 9),
+    "hold_unrealized": ("+0.0%;-0.0%;0.0%", 11),
 }
 # Excel の比較表に足す補助の列(列の名前 -> (見出し、表示形式、幅))。画面にはない値
 EXCEL_EXTRAS = {
@@ -206,7 +231,7 @@ def excel_value(column: str, value: float | None):
         return None
     if column == "market_cap":
         return value / 1e8
-    if column == "dividend_yield" or column in SIGNED_PERCENT or column in PERCENT:
+    if column in ("dividend_yield", "hold_weight", "hold_unrealized") or column in SIGNED_PERCENT or column in PERCENT:
         return value / 100
     return value
 
@@ -265,9 +290,22 @@ def format_value(column: str, value: float | None) -> str:
         return f"{value:.1f}%"
     if column == "rsi14":
         return f"{value:.1f}"
+    if column == "hold_qty":
+        return f"{value:,.10g}"
+    if column == "hold_value":
+        return f"{value:,.0f}"
+    if column == "hold_weight":
+        return f"{value:.1f}%"
+    if column == "hold_unrealized":
+        return f"{value:+.1f}%"
     if column == "turnover20":
         return f"{value:,.0f}"
     return f"{value:,.2f}"
+
+
+def safe_name(text: str) -> str:
+    """ファイル名に使えない文字を _ にする。"""
+    return "".join("_" if c in '\\/:*?"<>|' else c for c in text).strip() or "group"
 
 
 def period_labels(count: int) -> list[str]:
@@ -285,22 +323,78 @@ def oku(value: float | None) -> float | None:
     return None if value is None else value / 1e8
 
 
+# ---- 保有資産(資産管理の保有から作る) ----
+
+@dataclass(frozen=True)
+class HoldingInfo:
+    """保有資産の 1 銘柄(全証券会社・口座の合計)。"""
+    quantity: float
+    value: float | None    # 評価額(円)。株価データがなければ None
+    cost: float            # 取得原価(円)
+    weight: float | None   # 構成比(%)
+
+    @property
+    def unrealized_pct(self) -> float | None:
+        if self.value is None or not self.cost:
+            return None
+        return (self.value - self.cost) / self.cost * 100
+
+
+def load_holdings() -> dict[str, HoldingInfo]:
+    """asset.json から、今保有している日本株を評価額の大きい順に返す(コード -> 保有)。なければ空。"""
+    store = AssetStore(ASSET_PATH)
+    try:
+        store.load()
+    except (OSError, ValueError):
+        return {}
+    ledger = build_ledger(store.trades, store.instruments)
+    merged: dict[str, list] = {}  # コード -> [保有数、評価額(None あり)、取得原価]
+    for v in value_all(ledger, store.instruments, PriceBook()):
+        if v.instrument.asset_class != AssetClass.JP_STOCK or v.holding.quantity <= 0:
+            continue
+        item = merged.setdefault(v.instrument.code, [0.0, 0.0, 0.0])
+        item[0] += v.holding.quantity
+        item[1] = None if item[1] is None or v.value_jpy is None else item[1] + v.value_jpy
+        item[2] += v.cost_jpy
+    total = sum(value for _, value, _ in merged.values() if value is not None)
+    ordered = sorted(merged.items(), key=lambda kv: -(kv[1][1] or 0))
+    return {
+        code: HoldingInfo(quantity, value, cost, value / total * 100 if value is not None and total else None)
+        for code, (quantity, value, cost) in ordered
+    }
+
+
+def asset_mtime() -> float | None:
+    try:
+        return ASSET_PATH.stat().st_mtime
+    except OSError:
+        return None
+
+
 # ---- 保存(compare.json) ----
 
 def read_compare() -> dict:
     """compare.json を読み込み、項目ごとに形を確かめる(おかしな値は既定値にする)。ファイルがなければ既定値。"""
     state = {
-        "codes": [], "view": "table", "column_groups": list(DEFAULT_GROUPS), "benchmark": next(iter(BENCHMARKS)),
+        "groups": [{"name": DEFAULT_GROUP_NAME, "codes": []}], "selected_group": DEFAULT_GROUP_NAME,
+        "view": "table", "column_groups": list(DEFAULT_GROUPS), "benchmark": next(iter(BENCHMARKS)),
         "corr_period": "1年", "fin_item": "revenue", "fin_mode": "chart", "fin_table": "amount",
     }
     if not COMPARE_PATH.exists():
         return with_global_settings(state)
     with open(COMPARE_PATH, encoding="utf-8") as f:
         data = json.load(f)
-    codes = data.get("codes") if isinstance(data, dict) else None
-    if not isinstance(codes, list):
+    if not isinstance(data, dict) or not isinstance(data.get("groups", data.get("codes")), list):
         raise ValueError("ファイルの形式が違います")
-    state["codes"] = list(dict.fromkeys(c for c in codes if isinstance(c, str) and c))
+    if isinstance(data.get("groups"), list):
+        state["groups"] = parse_groups(data["groups"])
+    else:
+        # 前の版(グループのない版)の銘柄は、「比較リスト」のグループに入れる
+        codes = list(dict.fromkeys(c for c in data["codes"] if isinstance(c, str) and c))
+        state["groups"] = [{"name": DEFAULT_GROUP_NAME, "codes": codes}]
+    names = [HOLDINGS_GROUP, *(g["name"] for g in state["groups"])]
+    selected = data.get("selected_group")
+    state["selected_group"] = selected if selected in names else state["groups"][0]["name"]
     choices = {
         "view": ("table", "correlation", "financials"), "benchmark": tuple(BENCHMARKS),
         "corr_period": tuple(CORRELATION_PERIODS), "fin_item": tuple(ITEMS), "fin_mode": ("chart", "table"),
@@ -311,6 +405,8 @@ def read_compare() -> dict:
             state[key] = data[key]
     groups = data.get("column_groups")
     if isinstance(groups, list):
+        if data.get("version", 1) < 2:  # 前の版には「保有」の列がなかったので、最初は表示する
+            groups = [*groups, "holding"]
         state["column_groups"] = [g for g in COLUMN_GROUPS if g in groups]
     # 前の版は compare.json にベンチマーク・相関の期間を持っていた。settings.json がまだなければ引き継ぐ
     if not settings_exist() and ("benchmark" in data or "corr_period" in data):
@@ -319,6 +415,23 @@ def read_compare() -> dict:
         except OSError:
             pass
     return with_global_settings(state)
+
+
+def parse_groups(saved) -> list[dict]:
+    """保存されていたグループを {"name": 名前, "codes": [...]} の一覧に直す。形の違うもの・重複・
+    固定のグループと同じ名前は除く。ふつうのグループが 1 つもなければ、空の「比較リスト」を作る。"""
+    groups = []
+    for group in saved if isinstance(saved, list) else []:
+        if not isinstance(group, dict):
+            continue
+        name, codes = group.get("name"), group.get("codes")
+        if not isinstance(name, str) or not name.strip() or name.strip() == HOLDINGS_GROUP:
+            continue
+        if any(g["name"] == name.strip() for g in groups):
+            continue
+        codes = [c for c in codes if isinstance(c, str) and c] if isinstance(codes, list) else []
+        groups.append({"name": name.strip(), "codes": list(dict.fromkeys(codes))})
+    return groups or [{"name": DEFAULT_GROUP_NAME, "codes": []}]
 
 
 def with_global_settings(state: dict) -> dict:
@@ -351,7 +464,9 @@ class CompareApp(ttk.Frame):
         super().__init__(master)
         self.settings = settings  # compare.json の内容(ttk の state() と名前が重ならないよう settings にする)
         self.listed = load_listed()
-        self.codes: list[str] = settings["codes"]
+        self.holdings: dict[str, HoldingInfo] = load_holdings()  # 保有資産(資産管理の保有から)
+        self.holding_codes: list[str] = list(self.holdings)
+        self.asset_mtime = asset_mtime()
         self.quotes: dict[str, Quote] = {}       # 取得済みの銘柄だけが入る
         self.pending: set[str] = set()           # 指標を取得中の銘柄
         self.techs: dict[str, TechMetrics] = {}  # テクニカル指標
@@ -365,6 +480,7 @@ class CompareApp(ttk.Frame):
         self.pool = ThreadPoolExecutor(max_workers=WORKERS)
         self.chart_windows: dict[str, tk.Toplevel] = {}  # 銘柄コード -> 開いているチャートのウィンドウ
 
+        self._build_group_bar()
         self._build_controls()
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side="top", fill="both", expand=True, padx=4, pady=(6, 0))
@@ -379,13 +495,149 @@ class CompareApp(ttk.Frame):
 
         self.compute_tech(self.codes)
         self.fetch(self.codes)
+        self._refresh_groups()
+        # 資産管理で取引を入れたら、戻ってきたときに保有資産を作り直す
+        self.winfo_toplevel().bind("<FocusIn>", lambda e: self._reload_holdings_if_changed(), add="+")
         self.after(POLL_INTERVAL, self._poll)
+
+    # ---- グループ ----
+
+    @property
+    def is_holdings(self) -> bool:
+        """保有資産(固定のグループ)を選んでいるか。"""
+        return self.settings["selected_group"] == HOLDINGS_GROUP
+
+    @property
+    def group(self) -> dict | None:
+        """選んでいるふつうのグループ(保有資産のときは None)。"""
+        return next((g for g in self.settings["groups"] if g["name"] == self.settings["selected_group"]), None)
+
+    @property
+    def codes(self) -> list[str]:
+        """選んでいるグループの銘柄(比較表・相関・業績・Excel はこの銘柄で作る)。"""
+        if self.is_holdings:
+            return self.holding_codes
+        group = self.group
+        return group["codes"] if group is not None else []
+
+    def _build_group_bar(self):
+        bar = ttk.Frame(self)
+        bar.pack(side="top", fill="x", padx=4, pady=(4, 0))
+        ttk.Label(bar, text="グループ").pack(side="left")
+        self.group_box = ttk.Combobox(bar, state="readonly", width=24)
+        self.group_box.pack(side="left", padx=(4, 8))
+        self.group_box.bind("<<ComboboxSelected>>", lambda e: self._on_group_selected())
+        self.group_buttons = []
+        for text, command in (("新規", self.new_group), ("名前変更", self.rename_group), ("削除", self.delete_group)):
+            button = ttk.Button(bar, text=text, command=command)
+            button.pack(side="left", padx=(0, 4))
+            self.group_buttons.append(button)
+        self.group_note = tk.StringVar()
+        ttk.Label(bar, textvariable=self.group_note, style="Muted.TLabel").pack(side="left", padx=(8, 0))
+
+    def _group_names(self) -> list[str]:
+        return [HOLDINGS_GROUP, *(g["name"] for g in self.settings["groups"])]
+
+    def _refresh_groups(self) -> None:
+        """グループの欄と、保有資産のときに使えない操作を、選んでいるグループに合わせる。"""
+        labels = [HOLDINGS_LABEL, *(g["name"] for g in self.settings["groups"])]
+        self.group_box.configure(values=labels)
+        self.group_box.current(self._group_names().index(self.settings["selected_group"]))
+        holdings = self.is_holdings
+        for button in self.group_buttons[1:]:  # 名前変更・削除
+            button.configure(state="disabled" if holdings else "normal")
+        self.search.entry.configure(state="disabled" if holdings else "normal")
+        for widget in self.search.bar.winfo_children():  # 銘柄の追加欄の「追加」ボタン
+            if isinstance(widget, ttk.Button):
+                widget.configure(state="disabled" if holdings else "normal")
+        self.delete_button.configure(state="disabled" if holdings else "normal")
+        self.group_note.set(
+            ("資産管理の保有 " + f"{len(self.holding_codes)} 銘柄(評価額の大きい順)。銘柄の追加・削除は資産管理で行います"
+             if self.holding_codes else "資産管理で保有を登録すると、ここに出ます")
+            if holdings else ""
+        )
+        self.table.show_holding_group(holdings)
+
+    def _on_group_selected(self) -> None:
+        self.group_box.selection_clear()
+        self.select_group(self._group_names()[self.group_box.current()])
+
+    def select_group(self, name: str) -> None:
+        """グループを選ぶ。まだ指標や株価を持っていない銘柄だけを取りに行く。"""
+        if name not in self._group_names():
+            return
+        self.settings["selected_group"] = name
+        self.table.sort_column, self.table.sort_reverse = None, False
+        missing = [c for c in self.codes if c not in self.techs]
+        self.compute_tech(missing)
+        self.fetch([c for c in self.codes if c not in self.quotes])
+        self._refresh_groups()
+        self.save()
+        self.refresh()
+
+    def _ask_group_name(self, title: str, initial: str = "") -> str | None:
+        """グループの名前を尋ねる。取り消し・使えない名前は None。"""
+        name = (simpledialog.askstring(title, "グループの名前", initialvalue=initial, parent=self) or "").strip()
+        if not name or name == initial:
+            return None
+        if name == HOLDINGS_GROUP or name in self._group_names():
+            messagebox.showerror(APP_NAME, f"「{name}」という名前のグループは、作れません(すでにあります)。", parent=self)
+            return None
+        return name
+
+    def new_group(self) -> None:
+        name = self._ask_group_name("グループの新規作成")
+        if name:
+            self.settings["groups"].append({"name": name, "codes": []})
+            self.select_group(name)
+
+    def rename_group(self) -> None:
+        group = self.group
+        if group is None:
+            return
+        name = self._ask_group_name("グループの名前変更", group["name"])
+        if name:
+            group["name"] = name
+            self.settings["selected_group"] = name
+            self._refresh_groups()
+            self.save()
+
+    def delete_group(self) -> None:
+        """選んでいるグループを消す。最後の 1 つを消したときは、空の「比較リスト」を作り直す。"""
+        group = self.group
+        if group is None:
+            return
+        if group["codes"] and not messagebox.askyesno(
+            APP_NAME, f"グループ「{group['name']}」と、登録されている {len(group['codes'])} 銘柄を削除しますか?", parent=self,
+        ):
+            return
+        groups = self.settings["groups"]
+        index = groups.index(group)
+        groups.remove(group)
+        if not groups:
+            groups.append({"name": DEFAULT_GROUP_NAME, "codes": []})
+        self.select_group(groups[min(index, len(groups) - 1)]["name"])
+
+    def _reload_holdings_if_changed(self) -> None:
+        """asset.json が変わっていたら、保有資産を作り直す(資産管理で取引を入れたとき)。"""
+        mtime = asset_mtime()
+        if mtime == self.asset_mtime:
+            return
+        self.asset_mtime = mtime
+        self.holdings = load_holdings()
+        self.holding_codes[:] = list(self.holdings)
+        if self.is_holdings:
+            self.compute_tech([c for c in self.codes if c not in self.techs])
+            self.fetch([c for c in self.codes if c not in self.quotes])
+            self._refresh_groups()
+            self.refresh()
 
     def _build_controls(self):
         bar = ttk.Frame(self)
         bar.pack(side="top", fill="x", padx=4, pady=(4, 0))
         ttk.Button(bar, text="Excel 出力", command=self.export_excel).pack(side="right", padx=(12, 0))
-        ttk.Button(bar, text="削除", width=5, command=self.remove_selected).pack(side="right")
+        self.delete_button = ttk.Button(bar, text="削除", width=5, command=self.remove_selected)
+        self.delete_button.pack(side="right")
         self.refresh_button = ttk.Button(bar, text="更新", width=5, command=self.reload)
         self.refresh_button.pack(side="right", padx=(0, 4))
         self.status_var = tk.StringVar()
@@ -412,7 +664,10 @@ class CompareApp(ttk.Frame):
         return market.split("（")[0] if isinstance(market, str) else ""
 
     def add_stock(self, code: str) -> None:
-        """銘柄を加えて指標を取得する。登録済みなら比較表で選ぶだけ。"""
+        """銘柄を選んでいるグループに加えて指標を取得する。登録済みなら比較表で選ぶだけ。"""
+        if self.is_holdings:
+            self.status_var.set("保有資産のグループの銘柄は、資産管理の保有から自動で作られます(追加は資産管理で行います)。")
+            return
         if code not in self.codes:
             self.codes.append(code)
             self.save()
@@ -422,15 +677,15 @@ class CompareApp(ttk.Frame):
         self.table.select(code)
 
     def remove_selected(self) -> None:
-        """比較表で選んでいる銘柄を外す(集計の行は外せない)。"""
+        """比較表で選んでいる銘柄を外す(集計の行は外せない。保有資産のグループでは外せない)。"""
+        if self.is_holdings:
+            self.status_var.set("保有資産のグループの銘柄は、資産管理の保有から自動で作られます(削除は資産管理で行います)。")
+            return
         removed = {iid for iid in self.table.tree.selection() if iid in self.codes}
         if not removed:
             self.status_var.set("削除する銘柄を、比較表で選んでください。")
             return
         self.codes[:] = [c for c in self.codes if c not in removed]
-        for code in removed:
-            self.quotes.pop(code, None)
-            self.techs.pop(code, None)
         self.save()
         self.refresh()
 
@@ -488,7 +743,13 @@ class CompareApp(ttk.Frame):
             self.techs[code] = technical_metrics(self.daily(code), bench)
 
     def value(self, code: str, column: str) -> float | None:
-        """比較表の値(指標は取得した値、テクニカルは計算した値)。"""
+        """比較表の値(指標は取得した値、テクニカルは計算した値、保有の列は資産管理の保有)。"""
+        if column in HOLDING_COLUMNS:
+            holding = self.holdings.get(code) if self.is_holdings else None
+            if holding is None:
+                return None
+            return {"hold_qty": holding.quantity, "hold_value": holding.value, "hold_weight": holding.weight,
+                    "hold_unrealized": holding.unrealized_pct}[column]
         if column in TECH_COLUMNS:
             tech = self.techs.get(code)
             return tech.values.get(column) if tech and not tech.error else None
@@ -543,9 +804,8 @@ class CompareApp(ttk.Frame):
                 break
             if kind == "quote":
                 self.pending.discard(code)
-                if code in self.codes:  # 取得中に削除された銘柄は捨てる
-                    self.quotes[code] = result
-                    changed = True
+                self.quotes[code] = result  # 他のグループでも使うので、今のグループにない銘柄も覚えておく
+                changed = True
             else:
                 self.fin_pending.discard(code)
                 self.financials.items[code] = result
@@ -588,7 +848,8 @@ class CompareApp(ttk.Frame):
 
     def refresh_status(self) -> None:
         if not self.codes:
-            self.status_var.set("「銘柄の追加」欄に銘柄コードまたは銘柄名を入力して、比べる銘柄を登録してください。")
+            self.status_var.set("資産管理で保有を登録すると、保有資産のグループに出ます。" if self.is_holdings else
+                                "「銘柄の追加」欄に銘柄コードまたは銘柄名を入力して、比べる銘柄を登録してください。")
             return
         lines = []
         text = f"{len(self.codes)} 銘柄"
@@ -665,7 +926,7 @@ class CompareApp(ttk.Frame):
         now = datetime.now()
         path = filedialog.asksaveasfilename(
             parent=self, title="Excel に出力",
-            initialdir=BASE_DIR, initialfile=f"compare_{now:%Y%m%d}.xlsx",
+            initialdir=BASE_DIR, initialfile=f"compare_{safe_name(self.settings['selected_group'])}_{now:%Y%m%d}.xlsx",
             defaultextension=".xlsx", filetypes=[("Excel ブック", "*.xlsx")],
         )
         if not path:
@@ -704,10 +965,14 @@ class TableView(ttk.Frame):
         bar.pack(side="top", fill="x", padx=2, pady=(4, 2))
         ttk.Label(bar, text="表示する列:").pack(side="left")
         self.group_vars = {}
+        self.group_checks = {}
+        self.holding_group = False  # 保有資産のグループを表示しているか(保有の列を出せる)
         for name, (label, _columns) in COLUMN_GROUPS.items():
             var = tk.BooleanVar(value=name in app.settings["column_groups"])
-            ttk.Checkbutton(bar, text=label, variable=var, command=self._on_groups_changed).pack(side="left", padx=(6, 0))
+            check = ttk.Checkbutton(bar, text=label, variable=var, command=self._on_groups_changed)
+            check.pack(side="left", padx=(6, 0))
             self.group_vars[name] = var
+            self.group_checks[name] = check
 
         frame = ttk.Frame(self)
         frame.pack(side="top", fill="both", expand=True)
@@ -750,11 +1015,24 @@ class TableView(ttk.Frame):
     # ---- 列のグループ ----
 
     def visible_columns(self) -> list[str]:
+        """表示する列。保有の列は、保有資産のグループのときだけ、銘柄の基本の列のすぐ右に出す。"""
         columns = list(BASE_COLUMNS)
+        if self.holding_group and self.group_vars["holding"].get():
+            columns += list(HOLDING_COLUMNS)
         for name, (_label, group_columns) in COLUMN_GROUPS.items():
-            if self.group_vars[name].get():
+            if name != "holding" and self.group_vars[name].get():
                 columns += group_columns
         return columns
+
+    def show_holding_group(self, holdings: bool) -> None:
+        """保有資産のグループかどうかに合わせて、「保有」のチェックと保有の列を出し入れする。"""
+        self.holding_group = holdings
+        check = self.group_checks["holding"]
+        if holdings:
+            check.pack(side="left", padx=(6, 0))
+        else:
+            check.pack_forget()
+        self._apply_groups()
 
     def _apply_groups(self):
         self.tree.configure(displaycolumns=self.visible_columns())
@@ -778,7 +1056,8 @@ class TableView(ttk.Frame):
         else:
             numbers = [format_value(c, self.app.value(code, c)) for c in columns]
         tech = [format_value(c, self.app.value(code, c)) for c in TECH_COLUMNS]
-        return (self.app.stock_name(code), code, self.app.stock_market(code), *numbers, *tech)
+        holding = [format_value(c, self.app.value(code, c)) for c in HOLDING_COLUMNS]
+        return (self.app.stock_name(code), code, self.app.stock_market(code), *numbers, *tech, *holding)
 
     def sorted_codes(self) -> list[str]:
         column, codes = self.sort_column, self.app.codes
@@ -811,7 +1090,7 @@ class TableView(ttk.Frame):
         rows = {}
         for label, function in SUMMARIES.items():
             cells = [format_value(c, function(values[c]) if values[c] else None) for c in (*METRICS, *TECH_COLUMNS)]
-            rows[label] = (label, "", "", *[""] * len(FIELDS), *cells)
+            rows[label] = (label, "", "", *[""] * len(FIELDS), *cells, *[""] * len(HOLDING_COLUMNS))
         return rows
 
     def refresh(self):
@@ -835,6 +1114,20 @@ class TableView(ttk.Frame):
 
     # ---- 一番高い値の赤い文字(バリュエーションの列だけ) ----
 
+    def colored_cells(self) -> list[tuple[str, str, str]]:
+        """文字に色を付けるセル (銘柄コード, 列の名前, 色)。
+
+        バリュエーションの列の一番高い値は赤。保有資産の含み損益率は、全体設定の色の決まりの利益・損失の色。
+        """
+        cells = [(code, column, "#d00000") for code, column in self.highest_cells()]
+        if self.holding_group:
+            plus, minus = profit_colors()
+            for code in self.app.codes:
+                value = self.app.value(code, "hold_unrealized")
+                if value is not None and abs(value) >= 0.05:
+                    cells.append((code, "hold_unrealized", plus if value > 0 else minus))
+        return cells
+
     def highest_cells(self) -> list[tuple[str, str]]:
         """指標の列ごとに、一番高い値(集計の High と同じ値)の (銘柄コード, 列の名前) の一覧。同じ値は全部。"""
         cells = []
@@ -856,11 +1149,11 @@ class TableView(ttk.Frame):
         style = ttk.Style()
         selected = set(self.tree.selection())
         visible = set(self.visible_columns())
-        cells = [(code, column) for code, column in self.highest_cells()
+        cells = [(code, column, color) for code, column, color in self.colored_cells()
                  if self.tree.exists(code) and column in visible]
         while len(self.highlights) < len(cells):
             self.highlights.append(self._new_highlight())
-        for label, (code, column) in zip(self.highlights, cells):
+        for label, (code, column, color) in zip(self.highlights, cells):
             bbox = self.tree.bbox(code, column)
             if not bbox:  # スクロールで見えていない
                 label.place_forget()
@@ -870,7 +1163,7 @@ class TableView(ttk.Frame):
             label.configure(
                 text=self.tree.set(code, column),
                 background=style.lookup("Treeview", "background", state) or "white",
-                foreground="#ffb3b3" if code in selected else "#d00000",  # 選択中の濃い背景でも読める赤
+                foreground=color,
             )
             x, y, width, height = bbox
             label.place(in_=self.tree, x=x + 1, y=y + 1, width=max(width - 2, 1), height=max(height - 2, 1))
@@ -1223,11 +1516,13 @@ class ExcelWriter:
     def _table(self, sheet):
         app = self.app
         sheet.title = "比較表"
-        columns = list(COLUMNS)
+        # 保有の列は、保有資産のグループのときだけ(銘柄の基本の列のすぐ右)
+        columns = list(BASE_COLUMNS) + (list(HOLDING_COLUMNS) if app.is_holdings else []) + [
+            c for c in COLUMNS if c not in BASE_COLUMNS and c not in HOLDING_COLUMNS]
         extras = list(EXCEL_EXTRAS)
         self._header(sheet, 1, [COLUMNS[c][0] for c in columns] + [EXCEL_EXTRAS[e][0] for e in extras],
                      [EXCEL_FORMATS[c][1] for c in columns] + [EXCEL_EXTRAS[e][2] for e in extras])
-        highest = set(app.table.highest_cells())
+        colors = {(code, column): color.lstrip("#").upper() for code, column, color in app.table.colored_cells()}
         row = 2
         for code in app.table.sorted_codes():  # 画面の並び順
             quote = app.quotes.get(code)
@@ -1243,8 +1538,8 @@ class ExcelWriter:
                 cell = self._cell(sheet, row, i, value, EXCEL_FORMATS[column][0])
                 if column in ("code", "market"):
                     cell.alignment = Alignment(horizontal="center")
-                if (code, column) in highest:
-                    cell.font = Font(color=EXCEL_RED)
+                if (code, column) in colors:
+                    cell.font = Font(color=colors[(code, column)])
             for j, extra in enumerate(extras, start=len(columns) + 1):
                 if tech is None or tech.error:
                     value = None
@@ -1392,6 +1687,7 @@ class ExcelWriter:
         lines = [
             ("出力した日時", f"{self.now:%Y-%m-%d %H:%M}"),
             ("ベンチマーク", f"{app.benchmark} {BENCHMARKS.get(app.benchmark, '')}"),
+            ("グループ", app.settings["selected_group"] + ("(資産管理の保有から自動)" if app.is_holdings else "")),
             ("銘柄数", len(app.codes)),
         ]
         dates = {t.base_date for c in app.codes if (t := app.techs.get(c)) and t.base_date}
@@ -1434,8 +1730,17 @@ def main() -> int:
     except (OSError, ValueError) as e:
         messagebox.showerror(APP_NAME, f"{COMPARE_PATH.name} を読み込めません。\n{e}", parent=root)
         return 1
-    added = [code.upper().removesuffix(".T") for code in sys.argv[1:]]
-    settings["codes"] += [c for c in dict.fromkeys(added) if c not in settings["codes"]]
+    args = sys.argv[1:]
+    if "--group" in args[:-1]:  # グループを選んで起動する(python fina_compare.py --group 保有資産)
+        index = args.index("--group")
+        name = args[index + 1]
+        if name in (HOLDINGS_GROUP, HOLDINGS_LABEL, *(g["name"] for g in settings["groups"])):
+            settings["selected_group"] = HOLDINGS_GROUP if name == HOLDINGS_LABEL else name
+        args = args[:index] + args[index + 2:]
+    added = [code.upper().removesuffix(".T") for code in args]
+    if added:  # 選んでいるグループ(保有資産のときは先頭のふつうのグループ)に追加する
+        target = next((g for g in settings["groups"] if g["name"] == settings["selected_group"]), settings["groups"][0])
+        target["codes"] += [c for c in dict.fromkeys(added) if c not in target["codes"]]
     try:
         app = CompareApp(root, settings)
     except FileNotFoundError as e:

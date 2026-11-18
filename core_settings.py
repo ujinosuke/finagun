@@ -26,7 +26,7 @@ import sys
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
-__version__ = "0.1.004"
+__version__ = "0.1.005"
 
 APP_DIR = Path(__file__).resolve().parent  # プログラムのフォルダ(保存ファイルの置き場所)
 SETTINGS_PATH = APP_DIR / "settings.json"
