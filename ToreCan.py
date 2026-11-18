@@ -82,11 +82,11 @@ class Program:
 
 PROGRAMS = [
     Program("asset", "資産管理", "fina_asset.py", "保有・損益・配当・ヒートマップ", True),
-    Program("backtest", "バックテスト", "fina_bktest.py", "ストラテジーの検証", False),
-    Program("techtrainer", "テクニカル訓練", "fina_techtrainer.py", "チャートを進めて売買の練習", False),
-    Program("screening", "スクリーニング", "fina_screening.py", "条件に合う銘柄を探す(先にデータ更新)", False),
     Program("watchlist", "ウォッチリスト", "fina_watchlist.py", "銘柄をグループで見て回る", True),
     Program("compare", "銘柄比較", "fina_compare.py", "指標・相関・業績を並べて比べる", True),
+    Program("screening", "スクリーニング", "fina_screening.py", "条件に合う銘柄を探す(先にデータ更新)", False),
+    Program("backtest", "バックテスト", "fina_bktest.py", "ストラテジーの検証", False),
+    Program("techtrainer", "テクニカル訓練", "fina_techtrainer.py", "チャートを進めて売買の練習", False),
 ]
 
 

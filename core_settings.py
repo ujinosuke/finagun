@@ -4,7 +4,7 @@
 
 バージョン
     __version__ をこの 1 か所だけで持つ。ホーム画面と、全プログラムのタイトルバー(app_title)で使う。
-    上げ方: 機能を足したらマイナー、直しだけならパッチを上げ、README.md の更新履歴に 1 行足す。
+    上げ方: 変更のたびに 0.1.xxx の xxx(3 桁)を 1 つ上げる(0.1.003 → 0.1.004)。メジャー・マイナーは本人が決めたときだけ上げる。README.md の更新履歴に 1 行足す。
 全体設定(settings.json)
     色の決まり(日本式・海外式)、銘柄比較のベンチマーク・相関の期間、データフォルダの場所。
     各プログラムは起動時に 1 回読む(開いている間にホームで変えても、起動し直すまで反映されない)。
@@ -14,7 +14,7 @@
 このモジュールは他のモジュールを import しない(core_gather などから読まれるので、循環を避ける)。
 
 使い方(他のプログラムから):
-    root.title(app_title("asset"))      # "ToreCan asset v0.1.0"
+    root.title(app_title("asset"))      # "ToreCan asset v0.1.003"
     up, down = market_colors()          # 上昇・下落(利益・損失)の色
     settings = load_settings()
     update_settings(benchmark="1321")   # 一部だけ変えて保存する
@@ -26,7 +26,7 @@ import sys
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
-__version__ = "0.3.0"
+__version__ = "0.1.003"
 
 APP_DIR = Path(__file__).resolve().parent  # プログラムのフォルダ(保存ファイルの置き場所)
 SETTINGS_PATH = APP_DIR / "settings.json"
@@ -46,7 +46,7 @@ CORRELATION_PERIOD_NAMES = ("3か月", "6か月", "1年", "全期間")
 
 
 def app_title(name: str) -> str:
-    """タイトルバーの文字。app_title("asset") -> "ToreCan asset v0.1.0"。"""
+    """タイトルバーの文字。app_title("asset") -> "ToreCan asset v0.1.003"。"""
     return f"ToreCan {name} v{__version__}"
 
 
