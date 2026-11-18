@@ -50,6 +50,7 @@ from core_settings import (
     APP_DIR, COLOR_SCHEMES, Settings, __version__, acquire_lock, data_root, is_japan_style, load_settings,
     market_colors, profit_colors, release_lock, update_settings,
 )
+from gui_chart import CONDITIONS, OSCILLATORS, TIMEFRAMES, chart_defaults
 from gui_icons import icon
 from gui_theme import (
     ACCENT, ACCENT_LIGHT, BACKGROUND, BORDER, CARD, PAD, PAD2, TEXT, TEXT_MUTED, WARNING, apply_theme, fonts,
@@ -705,6 +706,7 @@ class SettingsDialog(tk.Toplevel):
         for name in CORRELATION_PERIODS:
             ttk.Radiobutton(line, text=name, value=name, variable=self.period_var).pack(side="left", padx=(0, PAD))
         row += 1
+        row = self._build_chart_defaults(form, row)
         ttk.Label(form, text="データフォルダ").grid(row=row, column=0, sticky="w", padx=(0, PAD2), pady=(PAD2, 4))
         line = ttk.Frame(form)
         line.grid(row=row, column=1, sticky="w", pady=(PAD2, 4))
@@ -728,6 +730,46 @@ class SettingsDialog(tk.Toplevel):
         self._draw_sample()
         self._check_dir()
         self.grab_set()
+
+    # ---- チャートの既定 ----
+
+    def _build_chart_defaults(self, form, row: int) -> int:
+        """「チャートの既定」の欄。銘柄ごとのファイル(charts/)がない銘柄は、この表示で開く。次の行番号を返す。"""
+        defaults = chart_defaults()
+        self.chart_vars = {
+            "timeframe": tk.StringVar(value=defaults["timeframe"]),
+            "volume": tk.BooleanVar(value=defaults["volume"]),
+            "oscillator_on": tk.BooleanVar(value=defaults["oscillator_on"]),
+            "oscillator": tk.StringVar(value=defaults["oscillator"]),
+            "condition_on": tk.BooleanVar(value=defaults["condition_on"]),
+            "condition": tk.StringVar(value=defaults["condition"]),
+            "crosshair": tk.BooleanVar(value=defaults["crosshair"]),
+        }
+        v = self.chart_vars
+        ttk.Label(form, text="チャートの既定").grid(row=row, column=0, sticky="nw", padx=(0, PAD2), pady=(PAD2, 4))
+        box = ttk.Frame(form)
+        box.grid(row=row, column=1, sticky="w", pady=(PAD2, 4))
+        line = ttk.Frame(box)
+        line.pack(side="top", anchor="w")
+        for name in TIMEFRAMES:
+            ttk.Radiobutton(line, text=name, value=name, variable=v["timeframe"]).pack(side="left", padx=(0, PAD))
+        ttk.Checkbutton(line, text="出来高", variable=v["volume"]).pack(side="left", padx=(PAD, PAD))
+        ttk.Checkbutton(line, text="十字線", variable=v["crosshair"]).pack(side="left")
+        line = ttk.Frame(box)
+        line.pack(side="top", anchor="w", pady=(4, 0))
+        ttk.Checkbutton(line, text="オシレーター", variable=v["oscillator_on"]).pack(side="left")
+        ttk.Combobox(line, textvariable=v["oscillator"], values=list(OSCILLATORS), state="readonly", width=8).pack(
+            side="left", padx=(4, PAD2))
+        ttk.Checkbutton(line, text="コンディション", variable=v["condition_on"]).pack(side="left")
+        ttk.Combobox(line, textvariable=v["condition"], values=list(CONDITIONS), state="readonly", width=18).pack(
+            side="left", padx=(4, 0))
+        ttk.Label(box, text="図形や表示を保存していない銘柄は、この表示で開きます"
+                            "(チャートの「この表示を既定にする」ボタンでも変えられます)。",
+                  style="Muted.TLabel").pack(side="top", anchor="w", pady=(4, 0))
+        return row + 1
+
+    def _chart_defaults_now(self) -> dict:
+        return {key: var.get() for key, var in self.chart_vars.items()}
 
     # ---- 初期化 ----
 
@@ -817,6 +859,8 @@ class SettingsDialog(tk.Toplevel):
             self.bench_var.set(next(k for k, v in self.bench_names.items() if v == defaults.benchmark))
             self.period_var.set(defaults.corr_period)
             self.dir_var.set(defaults.data_dir)
+            for key, value in chart_defaults().items():
+                self.chart_vars[key].set(value)
             self._draw_sample()
         text = (f"{'・'.join(t.label for t in targets)}を初期化しました。{len(moved)} 個のファイルを "
                 f"{folder} に移しました(戻すときは、このフォルダから元の場所に移してください)。")
@@ -859,7 +903,8 @@ class SettingsDialog(tk.Toplevel):
             return
         try:
             update_settings(color_scheme=self.color_var.get(), benchmark=self.bench_names[self.bench_var.get()],
-                            corr_period=self.period_var.get(), data_dir=data_dir)
+                            corr_period=self.period_var.get(), data_dir=data_dir,
+                            chart_defaults=self._chart_defaults_now())
         except OSError as e:
             messagebox.showerror(APP_NAME, f"settings.json に保存できません。\n{e}", parent=self)
             return

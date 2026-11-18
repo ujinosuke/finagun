@@ -32,9 +32,18 @@ stock_database フォルダの日足データ(core_gather.py で取得)を読み
     図形の色        色のボタンを押すと、選択中の図形とこれから描く図形の色が変わる
     図形の削除      図形を右クリック、または選択して Delete。「全消去」ですべて削除
 
+表示の設定と図形は、銘柄ごとに charts/<コード>.json に保存する(core_chartstore.py。仕様は chart-state-spec.md)。
+どのプログラムから開いても、同じ銘柄なら同じ図形・表示になる。
+    保存する時機  図形を描く・動かす・色を変える・消すとき、足・下段・十字線を利用者が変えたとき
+    読み込む時機  銘柄を表示するとき。ウィンドウに戻ってきたとき、ほかのウィンドウが書き換えていれば読み直す
+    既定          ファイルのない銘柄は、ToreCan の設定のチャートの既定で開く。
+                  「この表示を既定にする」ボタンで、今の表示を既定にできる
+    図形を描く色は、全銘柄で 1 つ(ToreCan の settings.json に保存)
+他のプログラムが変えた表示(スクリーニングの show_condition など)は保存しない。
+テクニカル訓練は先の足を隠すので、ChartFrame(persist=False) で読み込みも保存もしない。
+
 他のプログラムからは、ChartFrame を tkinter の部品として組み込める。
-表示の設定と図形は get_state() / set_state() で取り出し・復元できる
-(fina_watchlist.py が watchlist.json への保存に使う)。
+get_state() / set_state() は、表示の設定と図形をまとめて取り出し・復元する(前の版の watchlist.json の形)。
 売買ポイントは set_trades() で重ね、select_trade() でその売買へ表示を動かせる(fina_bktest.py が使う)。
 set_data() で途中までの日足だけを表示できる(fina_techtrainer.py が、先の足を隠すのに使う)。
 """
@@ -57,7 +66,8 @@ from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 from gui_theme import apply_theme
 from core_gather import csv_path_for, load_saved
-from core_settings import app_title, market_colors
+from core_chartstore import chart_mtime, delete_chart, load_chart, save_chart
+from core_settings import app_title, load_settings, market_colors, update_settings
 from core_stocks import load_listed, load_stock_names, stock_index
 from gui_widgets import StockSearchBox
 from core_indicators import Indicator, SMAEssential3
@@ -167,6 +177,44 @@ def _parse_drawing(saved) -> dict | None:
     return {"type": kind, "points": points, "color": color}
 
 
+# ---- 表示の設定(銘柄ごとに保存する。ファイルのない銘柄は既定) ----
+
+DISPLAY_KEYS = {  # 表示の設定の項目 -> 値の型
+    "timeframe": str, "volume": bool, "oscillator_on": bool, "oscillator": str,
+    "condition_on": bool, "condition": str, "crosshair": bool,
+}
+# ToreCan の設定にチャートの既定がないときの表示(前の版の初期値と同じ)
+BUILTIN_DISPLAY = {
+    "timeframe": "日足", "volume": True, "oscillator_on": True, "oscillator": next(iter(OSCILLATORS)),
+    "condition_on": True, "condition": next(iter(CONDITIONS)), "crosshair": False,
+}
+
+
+def valid_display(saved, base: dict) -> dict:
+    """保存されていた表示の設定を確かめる。ない・使えない項目(なくなったオシレーターなど)は base の値にする。"""
+    display = dict(base)
+    choices = {"timeframe": TIMEFRAMES, "oscillator": OSCILLATORS, "condition": CONDITIONS}
+    for key, kind in DISPLAY_KEYS.items():
+        value = saved.get(key) if isinstance(saved, dict) else None
+        if type(value) is kind and (key not in choices or value in choices[key]):
+            display[key] = value
+    return display
+
+
+def chart_defaults() -> dict:
+    """チャートの既定の表示(ToreCan の設定 settings.json の chart_defaults。なければ BUILTIN_DISPLAY)。"""
+    return valid_display(load_settings().chart_defaults, BUILTIN_DISPLAY)
+
+
+def serialize_drawings(drawings: list[dict]) -> list[dict]:
+    """図形を JSON に保存できる形にする。"""
+    return [
+        {"type": d["type"], "color": d["color"],
+         "points": [[f"{date:%Y-%m-%d}", float(price)] for date, price in d["points"]]}
+        for d in drawings
+    ]
+
+
 @dataclass(frozen=True)
 class TradeMark:
     """チャートに示す売買 1 つ。exit_date が None なら保有中。"""
@@ -181,8 +229,11 @@ class TradeMark:
 class ChartFrame(ttk.Frame):
     """ローソク足チャートと操作用ツールバーをまとめた部品。"""
 
-    def __init__(self, master, code: str | None = None, searchable: bool = True):
-        """searchable が False なら、銘柄欄を出さない(表示する銘柄やデータを、他のプログラムが決めるとき)。"""
+    def __init__(self, master, code: str | None = None, searchable: bool = True, persist: bool = True):
+        """searchable が False なら、銘柄欄を出さない(表示する銘柄やデータを、他のプログラムが決めるとき)。
+
+        persist が False なら、銘柄ごとのファイルを読み込みも保存もしない(テクニカル訓練が使う)。
+        """
         super().__init__(master)
         self.searchable = searchable
         self.names = load_stock_names()
@@ -192,7 +243,11 @@ class ChartFrame(ttk.Frame):
         # 図形は {"type": 種類, "points": [(日付, 価格), ...], "color": 色} の形で、銘柄ごとに保持する
         self.drawings_by_code = {}
         self.drawings = []
-        self.color = DRAW_COLORS[0]
+        saved_color = load_settings().draw_color  # 図形を描く色は全銘柄で 1 つ
+        self.color = saved_color if _is_hex_color(saved_color) else DRAW_COLORS[0]
+        self.persist = persist
+        self.saved_display = chart_defaults()  # 銘柄のファイルに書く表示(利用者が選んだもの)
+        self.loaded_mtime: float | None = None  # 読み込んだときの、銘柄のファイルの更新時刻
         self.pending = None   # 作図中の図形(確定した点だけを持つ)
         self.preview = None   # 作図中、マウス位置にある次の点
         self.selected = None  # 選択中の図形
@@ -211,7 +266,10 @@ class ChartFrame(ttk.Frame):
         self.selected_trade: int | None = None  # 利確・損切りの線を出す売買(trade_marks の番号)
 
         self._build_toolbar()
+        self._apply_display(self.saved_display)
         self._build_chart()
+        # ほかのウィンドウで同じ銘柄の図形が変わっていたら、戻ってきたときに読み直す
+        self.winfo_toplevel().bind("<FocusIn>", lambda e: self._reload_if_changed(), add="+")
         if code:
             self.set_code(code)
 
@@ -242,33 +300,36 @@ class ChartFrame(ttk.Frame):
         for label in TIMEFRAMES:
             ttk.Radiobutton(
                 bar, text=label, value=label, variable=self.timeframe_var,
-                style="Toolbutton", command=self._show_bars,
+                style="Toolbutton", command=lambda: self._on_display_changed("timeframe"),
             ).pack(side="left")
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
 
         # 下段の表示・非表示
         self.volume_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(bar, text="出来高", variable=self.volume_var, command=self._rebuild_panes).pack(side="left")
+        ttk.Checkbutton(bar, text="出来高", variable=self.volume_var,
+                        command=lambda: self._on_display_changed("volume")).pack(side="left")
         self.oscillator_on_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            bar, text="オシレーター", variable=self.oscillator_on_var, command=self._on_oscillator_toggle,
+            bar, text="オシレーター", variable=self.oscillator_on_var,
+            command=lambda: self._on_display_changed("oscillator_on"),
         ).pack(side="left", padx=(8, 2))
         self.oscillator_var = tk.StringVar(value=next(iter(OSCILLATORS)))
         self.oscillator_box = ttk.Combobox(
             bar, textvariable=self.oscillator_var, values=list(OSCILLATORS), state="readonly", width=8,
         )
         self.oscillator_box.pack(side="left")
-        self.oscillator_box.bind("<<ComboboxSelected>>", lambda e: self._rebuild_panes())
+        self.oscillator_box.bind("<<ComboboxSelected>>", lambda e: self._on_display_changed("oscillator"))
         self.condition_on_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            bar, text="コンディション", variable=self.condition_on_var, command=self._on_condition_toggle,
+            bar, text="コンディション", variable=self.condition_on_var,
+            command=lambda: self._on_display_changed("condition_on"),
         ).pack(side="left", padx=(8, 2))
         self.condition_var = tk.StringVar(value=next(iter(CONDITIONS)))
         self.condition_box = ttk.Combobox(
             bar, textvariable=self.condition_var, values=list(CONDITIONS), state="readonly", width=16,
         )
         self.condition_box.pack(side="left")
-        self.condition_box.bind("<<ComboboxSelected>>", lambda e: self._rebuild_panes())
+        self.condition_box.bind("<<ComboboxSelected>>", lambda e: self._on_display_changed("condition"))
 
         # 2 段目: 図形
         bar = ttk.Frame(self)
@@ -294,7 +355,9 @@ class ChartFrame(ttk.Frame):
         ttk.Button(bar, text="全消去", width=7, command=self.clear_drawings).pack(side="left")
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
         self.crosshair_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bar, text="十字線", variable=self.crosshair_var, command=self._hide_crosshair).pack(side="left")
+        ttk.Checkbutton(bar, text="十字線", variable=self.crosshair_var,
+                        command=lambda: self._on_display_changed("crosshair")).pack(side="left")
+        ttk.Button(bar, text="この表示を既定にする", command=self.save_as_default).pack(side="right")
 
         # マウス位置の足の日付と OHLCV を表示する
         self.info_var = tk.StringVar()
@@ -365,11 +428,6 @@ class ChartFrame(ttk.Frame):
         self.crosshair_v = [ax.axvline(0, **style) for ax in axes.values()]
         self.crosshair_h = self.ax.axhline(0, **style)
 
-    def _on_oscillator_toggle(self):
-        # 表示するときは選択が必要。今は RSI しかないので、選択欄は表示中だけ操作できる
-        self.oscillator_box.configure(state="readonly" if self.oscillator_on_var.get() else "disabled")
-        self._rebuild_panes()
-
     def _on_condition_toggle(self):
         self.condition_box.configure(state="readonly" if self.condition_on_var.get() else "disabled")
         self._rebuild_panes()
@@ -412,9 +470,13 @@ class ChartFrame(ttk.Frame):
         self.code = code
         self.daily = daily.dropna()
         self.name_var.set(f"{code} {self.names.get(code, '')}".strip())
+        if self.persist:
+            self._load_chart(code)  # 銘柄の表示と図形(ファイルがなければ既定の表示・図形なし)
         self.drawings = self.drawings_by_code.setdefault(code, [])
         self.selected = None
         self.trade_marks, self.selected_trade = [], None  # 売買ポイントは銘柄ごとに渡し直してもらう
+        self.pending = self.preview = self.drag = self.pan_start = None
+        self._build_axes()  # 表示の設定(下段)が銘柄ごとに違うので、段を作り直す
         self._show_bars()
 
     def set_data(self, code: str, daily: pd.DataFrame) -> None:
@@ -771,8 +833,11 @@ class ChartFrame(ttk.Frame):
             self._render_drawings()
 
     def _on_release(self, _event):
+        moved = bool(self.drag and self.drag.get("moved"))
         self.pan_start = None
         self.drag = None
+        if moved:  # 図形を動かし終わったら保存する
+            self._save_chart()
 
     def _on_motion(self, event):
         if self.bars is None:
@@ -939,6 +1004,8 @@ class ChartFrame(ttk.Frame):
             self.drawings.append(self.pending)
             self.selected = self.pending
             self.tool_var.set("cursor")
+            self.pending = self.preview = None
+            self._save_chart()
         self.pending = self.preview = None
         self._render_drawings()
 
@@ -955,15 +1022,21 @@ class ChartFrame(ttk.Frame):
         xs = [i for i, _ in drag["points"]]
         dx = min(max(dx, -min(xs)), len(self.bars) - 1 - max(xs))
         drag["drawing"]["points"] = [(self.bars.index[i + dx], p + dy) for i, p in drag["points"]]
+        drag["moved"] = True
         self._render_drawings()
 
     def set_color(self, color: str) -> None:
         """図形の色を変える。選択中の図形があれば、その色も変える。"""
         self.color = color
         self.color_indicator.configure(bg=color)
+        try:
+            update_settings(draw_color=color)  # 描く色は全銘柄で 1 つ
+        except OSError:
+            pass
         if self.selected:
             self.selected["color"] = color
             self._render_drawings()
+            self._save_chart()
 
     def _choose_color(self):
         _, color = colorchooser.askcolor(self.color, parent=self, title="図形の色")
@@ -976,6 +1049,7 @@ class ChartFrame(ttk.Frame):
         if self.selected is drawing:
             self.selected = None
         self._render_drawings()
+        self._save_chart()
 
     def delete_selected(self) -> None:
         """選択中の図形を消す。"""
@@ -987,8 +1061,107 @@ class ChartFrame(ttk.Frame):
         self.drawings.clear()
         self.selected = None
         self._cancel_pending()
+        self._save_chart()
 
-    # ---- 状態の保存と復元 ----
+    # ---- 銘柄ごとの保存(charts/<コード>.json) ----
+
+    def _display_now(self) -> dict:
+        """今の表示の設定。"""
+        return {
+            "timeframe": self.timeframe_var.get(), "volume": self.volume_var.get(),
+            "oscillator_on": self.oscillator_on_var.get(), "oscillator": self.oscillator_var.get(),
+            "condition_on": self.condition_on_var.get(), "condition": self.condition_var.get(),
+            "crosshair": self.crosshair_var.get(),
+        }
+
+    def _apply_display(self, display: dict) -> None:
+        """表示の設定を画面の欄に入れる(描き直しは呼び出し側で行う)。"""
+        self.timeframe_var.set(display["timeframe"])
+        self.volume_var.set(display["volume"])
+        self.oscillator_on_var.set(display["oscillator_on"])
+        self.oscillator_var.set(display["oscillator"])
+        self.condition_on_var.set(display["condition_on"])
+        self.condition_var.set(display["condition"])
+        self.crosshair_var.set(display["crosshair"])
+        self.oscillator_box.configure(state="readonly" if display["oscillator_on"] else "disabled")
+        self.condition_box.configure(state="readonly" if display["condition_on"] else "disabled")
+
+    def _on_display_changed(self, key: str) -> None:
+        """利用者が表示の設定を変えた。描き直して、銘柄のファイルに保存する。
+
+        変えた項目だけを「利用者が選んだ表示」に入れる(スクリーニングが表示させたコンディションなど、
+        他のプログラムが変えた表示を保存しないため)。
+        """
+        self.saved_display[key] = self._display_now()[key]
+        if key == "timeframe":
+            self._show_bars()
+        elif key == "crosshair":
+            self._hide_crosshair()
+        else:
+            self.oscillator_box.configure(state="readonly" if self.oscillator_on_var.get() else "disabled")
+            self.condition_box.configure(state="readonly" if self.condition_on_var.get() else "disabled")
+            self._rebuild_panes()
+        self._save_chart()
+
+    def _load_chart(self, code: str) -> None:
+        """銘柄のファイルから、表示の設定と図形を読む。ファイルがなければ既定の表示・図形なし。"""
+        data = load_chart(code)
+        saved = data.get("drawings") if data else None
+        self.drawings_by_code[code] = [d for d in map(_parse_drawing, saved if isinstance(saved, list) else []) if d]
+        self.saved_display = valid_display(data.get("display") if data else None, chart_defaults())
+        self._apply_display(self.saved_display)
+        self.loaded_mtime = chart_mtime(code)
+
+    def _save_chart(self) -> None:
+        """表示中の銘柄の表示と図形を、銘柄のファイルに保存する。
+
+        表示は既定と違う項目だけを書く(既定を変えたら、変えていない項目は新しい既定に従う)。
+        図形がなく、表示も既定のままなら、ファイルを消す。
+        """
+        if not self.persist or not self.code:
+            return
+        defaults = chart_defaults()
+        display = {k: v for k, v in self.saved_display.items() if v != defaults.get(k)}
+        drawings = self.drawings_by_code.get(self.code, [])
+        try:
+            if not drawings and not display:
+                delete_chart(self.code)
+            else:
+                save_chart(self.code, display or None, serialize_drawings(drawings))
+        except OSError as e:
+            self.info_var.set(f"チャートを保存できません: {e}")
+        self.loaded_mtime = chart_mtime(self.code)
+
+    def _reload_if_changed(self) -> None:
+        """ほかのウィンドウが同じ銘柄のファイルを書き換えていたら、読み直して描き直す。"""
+        if not self.persist or not self.code or self.pending or self.drag:
+            return
+        if chart_mtime(self.code) == self.loaded_mtime:
+            return
+        timeframe = self.timeframe_var.get()
+        self._load_chart(self.code)
+        self.drawings = self.drawings_by_code.setdefault(self.code, [])
+        self.selected = None
+        if self.daily is None:
+            return
+        if self.timeframe_var.get() != timeframe:
+            self._build_axes()
+            self._show_bars()
+        else:
+            self._rebuild_panes()
+
+    def save_as_default(self) -> None:
+        """今の表示の設定を、チャートの既定(ToreCan の設定)にする。"""
+        try:
+            update_settings(chart_defaults=self._display_now())
+        except OSError as e:
+            self.info_var.set(f"既定を保存できません: {e}")
+            return
+        self.saved_display = self._display_now()
+        self._save_chart()  # 既定と同じになった表示は、銘柄のファイルから外れる
+        self.info_var.set("今の表示をチャートの既定にしました(ファイルのない銘柄は、この表示で開きます)。")
+
+    # ---- 状態の保存と復元(前の版の形。watchlist.json からの引き継ぎに使う) ----
 
     def get_state(self) -> dict:
         """表示の設定と全銘柄の図形を、JSON に保存できる形で返す。他のプログラムから使う。"""
@@ -1002,15 +1175,7 @@ class ChartFrame(ttk.Frame):
             "crosshair": self.crosshair_var.get(),
             "color": self.color,
             "drawings": {
-                code: [
-                    {
-                        "type": d["type"],
-                        "color": d["color"],
-                        "points": [[f"{date:%Y-%m-%d}", float(price)] for date, price in d["points"]],
-                    }
-                    for d in drawings
-                ]
-                for code, drawings in self.drawings_by_code.items() if drawings
+                code: serialize_drawings(drawings) for code, drawings in self.drawings_by_code.items() if drawings
             },
         }
 

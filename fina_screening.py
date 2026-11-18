@@ -372,10 +372,11 @@ class ScreeningFrame(ttk.Frame):
         code = selected[0]
         hits = self.shown[code].hits
         self.note_var.set("\n".join(f"【{hit.label}】 {hit.note}".rstrip() for hit in hits))
-        # チャートにも当てはまったコンディションを表示し、判定の根拠が見えるようにする
-        self.chart.show_condition(hits[0].condition)
         if code != self.chart.code:
             self.chart.set_code(code)
+        # チャートにも当てはまったコンディションを表示し、判定の根拠が見えるようにする
+        # (銘柄を表示した後に出す。銘柄のファイルの表示で上書きされないように。この表示は保存されない)
+        self.chart.show_condition(hits[0].condition)
 
 
 def main() -> int:

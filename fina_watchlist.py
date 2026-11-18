@@ -5,7 +5,8 @@
 (同じ銘柄を複数のグループに登録してもよい)。
 
 登録した内容は、ルートディレクトリの watchlist.json に保存し、次回の起動時に自動で読み込む。
-チャートの描画の状態(足の種類、下段の表示、図形の色、銘柄ごとの図形)も同じファイルに保存する。
+チャートの表示と図形は、どのプログラムから開いても同じになるよう、銘柄ごとに charts フォルダに保存する
+(gui_chart.py。前の版で watchlist.json に入っていた図形は、起動時に charts へ引き継ぐ)。
 保存は、登録内容を変えたとき・銘柄を選んだとき・ウィンドウを閉じるときに行う。
 
 株価は取得しない。stock_database フォルダの保存済みデータだけを使うので、
@@ -34,8 +35,9 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from gui_theme import apply_theme
-from gui_chart import ChartFrame
-from core_settings import app_title
+from core_chartstore import migrate_drawings
+from gui_chart import DISPLAY_KEYS, ChartFrame
+from core_settings import app_title, load_settings, update_settings
 from core_gather import csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from core_watchlist import (
@@ -52,6 +54,27 @@ LIST_COLUMNS = {
     "close": ("終値", 74, "e"),
     "change": ("前日比", 62, "e"),
 }
+
+
+def migrate_chart_state(chart: dict) -> None:
+    """前の版の watchlist.json の chart(表示の設定と全銘柄の図形)を引き継ぐ。
+
+    図形は銘柄ごとのファイル(charts/)に書き出す(ファイルがまだない銘柄だけ)。
+    表示の設定と描く色は、ToreCan の設定にまだなければ、チャートの既定・描く色にする。
+    何度呼んでも同じ結果になる(次に保存した watchlist.json からは chart がなくなる)。
+    """
+    try:
+        migrate_drawings(chart.get("drawings"))
+        settings = load_settings()
+        changes = {}
+        if not settings.chart_defaults:
+            changes["chart_defaults"] = {k: chart[k] for k in DISPLAY_KEYS if k in chart}
+        if not settings.draw_color and isinstance(chart.get("color"), str):
+            changes["draw_color"] = chart["color"]
+        if changes:
+            update_settings(**changes)
+    except OSError:
+        pass  # 引き継げなくても、ウォッチリストは使える(次の起動でもう一度試す)
 
 
 class WatchlistFrame(ttk.Frame):
@@ -74,13 +97,13 @@ class WatchlistFrame(ttk.Frame):
         self._build_group_bar(left)
         self._build_list(left)
         self._build_search(left)
+        if isinstance(data.get("chart"), dict):
+            migrate_chart_state(data["chart"])
         self.chart = ChartFrame(panes)
         panes.add(left, weight=0)
         panes.add(self.chart, weight=1)
 
-        # 前回の状態に戻す
-        if isinstance(data.get("chart"), dict):
-            self.chart.set_state(data["chart"])
+        # 前回の状態に戻す(チャートの表示と図形は、銘柄を選んだときに charts/ から読まれる)
         selected = data.get("selected") if isinstance(data.get("selected"), dict) else {}
         names = [group["name"] for group in self.groups]
         if selected.get("group") in names:
@@ -142,14 +165,16 @@ class WatchlistFrame(ttk.Frame):
     # ---- 保存 ----
 
     def save(self) -> bool:
-        """グループ・選択中の銘柄・チャートの状態を watchlist.json に保存する。保存できたら True。"""
+        """グループと選択中の銘柄を watchlist.json に保存する。保存できたら True。
+
+        チャートの表示と図形は、ChartFrame が銘柄ごとに charts/ へ保存する。
+        """
         self._merge_outside_changes()
         selected = self.tree.selection()
         data = {
             "version": FORMAT_VERSION,
             "groups": self.groups,
             "selected": {"group": self.group["name"], "code": selected[0] if selected else None},
-            "chart": self.chart.get_state(),
         }
         try:
             write_watchlist(data)

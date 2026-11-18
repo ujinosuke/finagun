@@ -31,14 +31,16 @@ class ResetTarget:
 RESET_TARGETS = [
     ResetTarget("asset", "資産管理", "取引・保有・資産推移の記録・証券会社・画面の状態と、配当情報のキャッシュ",
                 ("asset.json", "asset.json.tmp", "asset.json.bak", "dividend_cache.json", "dividend_cache.json.tmp")),
-    ResetTarget("watchlist", "ウォッチリスト", "グループと登録した銘柄・チャートに描いた図形・表示の状態",
+    ResetTarget("watchlist", "ウォッチリスト", "グループと登録した銘柄(チャートの図形は「チャート」で初期化)",
                 ("watchlist.json", "watchlist.json.tmp", "watchlist.json.bak")),
     ResetTarget("compare", "銘柄比較", "登録した銘柄・表示の設定と、業績のキャッシュ",
                 ("compare.json", "compare.json.tmp", "financials_cache.json", "financials_cache.json.tmp")),
     ResetTarget("screening", "スクリーニング", "", ()),
     ResetTarget("backtest", "バックテスト", "", ()),
     ResetTarget("techtrainer", "テクニカル訓練", "", ()),
-    ResetTarget("settings", "全体設定", "色の決まり・ベンチマーク・相関の期間・データフォルダ(既定に戻る)",
+    ResetTarget("chart", "チャート", "全銘柄のチャートに描いた図形と、銘柄ごとの表示(charts フォルダ)",
+                ("charts/*.json", "charts/*.json.tmp")),
+    ResetTarget("settings", "全体設定", "色の決まり・ベンチマーク・相関の期間・データフォルダ・チャートの既定・描く色(既定に戻る)",
                 ("settings.json", "settings.json.tmp", "settings.json.bak")),
     ResetTarget("logs", "ホームのログ", "ホームから起動したプログラムのエラー出力(logs フォルダ)", ("logs/*.log",)),
 ]

@@ -46,3 +46,6 @@ gather.lock
 
 # 初期化したときに移した保存ファイル(git 管理外)
 backup/
+
+# チャートの表示と図形(銘柄ごと。git 管理外)
+charts/

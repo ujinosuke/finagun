@@ -23,10 +23,10 @@
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
-__version__ = "0.1.003"
+__version__ = "0.1.004"
 
 APP_DIR = Path(__file__).resolve().parent  # プログラムのフォルダ(保存ファイルの置き場所)
 SETTINGS_PATH = APP_DIR / "settings.json"
@@ -57,7 +57,16 @@ class Settings:
     benchmark: str = "1306"         # 銘柄比較の相関・ベータのベンチマーク
     corr_period: str = "1年"        # 銘柄比較の相関の期間
     data_dir: str = ""              # listed_stocks・stock_database を入れたフォルダ。空ならプログラムのフォルダ
+    # チャートの既定の表示(足・出来高・オシレーター・コンディション・十字線)。
+    # 銘柄ごとのファイル(charts/)がない銘柄はこの表示で開く。値を確かめるのは gui_chart.chart_defaults
+    chart_defaults: dict = field(default_factory=dict)
+    draw_color: str = ""            # チャートで図形を描く色(全銘柄で 1 つ)。空なら gui_chart の最初の色
 
+
+CHART_DEFAULT_KEYS = {  # chart_defaults の項目 -> 値の型
+    "timeframe": str, "volume": bool, "oscillator_on": bool, "oscillator": str,
+    "condition_on": bool, "condition": str, "crosshair": bool,
+}
 
 CHOICES = {
     "color_scheme": tuple(COLOR_SCHEMES),
@@ -75,6 +84,10 @@ def parse_settings(data) -> Settings:
             if f.name in CHOICES:
                 if value in CHOICES[f.name]:
                     values[f.name] = value
+            elif f.name == "chart_defaults":
+                if isinstance(value, dict):
+                    values[f.name] = {k: v for k, v in value.items()
+                                      if k in CHART_DEFAULT_KEYS and type(v) is CHART_DEFAULT_KEYS[k]}
             elif isinstance(value, str):
                 values[f.name] = value.strip()
     return Settings(**values)

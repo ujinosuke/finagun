@@ -461,7 +461,8 @@ class TrainerFrame(ttk.Frame):
         body = ttk.Frame(self)
         body.pack(side="top", fill="both", expand=True)
         self._build_controls(body)
-        self.chart = ChartFrame(body, searchable=False)
+        # 先の足を隠して訓練するので、保存された図形(先の日付の線など)は読み込まず、描いた図形も保存しない
+        self.chart = ChartFrame(body, searchable=False, persist=False)
         self.chart.pack(side="left", fill="both", expand=True)
         self._update_controls()
 
