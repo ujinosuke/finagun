@@ -14,7 +14,9 @@
 配当情報は yfinance から取得し、dividend_cache.json にキャッシュする(保有銘柄とウォッチリストの銘柄だけ)。
 
 使い方:
-    python fina_asset.py
+    python fina_asset.py                 # 前回のタブで起動
+    python fina_asset.py --tab dividend  # タブを指定して起動
+                                         # (holdings・trades・realized・summary・dividend・heatmap)
 
 操作:
     取引の入力    「取引を入力」ボタン。銘柄は、銘柄コードまたは銘柄名の一部を入力して候補から選ぶ。
@@ -53,6 +55,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 
+from gui_theme import apply_theme
+from core_settings import app_title, is_japan_style, profit_colors
 from core_asset import (
     ACCOUNT_TYPES, ACTIONS, ASSET_PATH, TRANSFERS, AssetClass, AssetStore, HoldingKey, Instrument, Trade,
     build_ledger, changed_problems, jp_stock_id, jp_stock_instrument, validate_trade,
@@ -73,9 +77,9 @@ from gui_widgets import SortableTree, StockSearchBox, add_to_watchlist
 APP_NAME = "fina_asset"
 ALL = "すべて"  # 絞り込みで「すべて」を表す項目
 
-# 損益の色(日本式: 利益は赤、損失は緑。設定で反転できる)
+# 損益の色は全体設定(settings.json)の色の決まりに従う(core_settings.profit_colors)。
+# RED はエラーの文字など、損益以外に使う赤
 RED = "#d32f2f"
-GREEN = "#2e7d32"
 
 # グラフの色(dataviz の既定の配色。評価額は系列 1 の青、取得原価は補助の灰色)
 SERIES_BLUE = "#2a78d6"
@@ -1618,9 +1622,6 @@ class AssetApp(ttk.Frame):
                      values=[ALL, *ACCOUNT_TYPES]).pack(side="left", padx=(4, 12))
         for var in (self.broker_var, self.account_var):
             var.trace_add("write", lambda *_: self.refresh())
-        self.japan_color_var = tk.BooleanVar(value=bool(ui.get("japan_color", True)))
-        ttk.Checkbutton(bar, text="利益を赤で表示(日本式)", variable=self.japan_color_var,
-                        command=self.refresh).pack(side="left")
         ttk.Button(bar, text="取引を入力", command=self.open_trade_dialog).pack(side="right")
         ttk.Button(bar, text="CSV 取り込み", command=lambda: ImportDialog(self)).pack(side="right", padx=(0, 4))
         ttk.Button(bar, text="証券会社の編集", command=lambda: BrokerDialog(self)).pack(side="right", padx=(0, 4))
@@ -1677,7 +1678,7 @@ class AssetApp(ttk.Frame):
 
     def refresh(self) -> None:
         """絞り込みに合わせて、各タブと合計を表示し直す。"""
-        plus, minus = (RED, GREEN) if self.japan_color_var.get() else (GREEN, RED)
+        plus, minus = profit_colors()  # 全体設定の色の決まり(海外式: 利益が緑、日本式: 利益が赤)
         for tab_list in (self.holdings_tab.list, self.trades_tab.list, self.realized_tab.list,
                          self.realized_tab.by_stock):
             tab_list.set_colors(plus, minus)
@@ -1716,6 +1717,14 @@ class AssetApp(ttk.Frame):
     def set_message(self, text: str) -> None:
         self.message_var.set(text)
 
+    # 引数 --tab の名前 -> タブ
+    TAB_NAMES = ("holdings", "trades", "realized", "summary", "dividend", "heatmap")
+
+    def select_tab(self, name: str) -> None:
+        """名前(TAB_NAMES)でタブを選ぶ。知らない名前は無視する。"""
+        if name in self.TAB_NAMES:
+            self.notebook.select(self.TAB_NAMES.index(name))
+
     def matches_key(self, key: HoldingKey) -> bool:
         """保有のキーが絞り込みの条件に合うか。"""
         return self._matches(key[1], key[2])
@@ -1727,7 +1736,8 @@ class AssetApp(ttk.Frame):
 
     @property
     def up_is_red(self) -> bool:
-        return self.japan_color_var.get()
+        """上昇・利益を赤で示すか(全体設定の色の決まりが日本式なら True)。"""
+        return is_japan_style()
 
     def _show_lazy_tab(self):
         """見えているタブが重いタブで、表示が古ければ描き直す。"""
@@ -1765,7 +1775,7 @@ class AssetApp(ttk.Frame):
         self.store.ui.update(
             tab=self.notebook.index(self.notebook.select()),
             broker=self.broker_var.get(), account=self.account_var.get(),
-            merge=self.holdings_tab.merge_var.get(), japan_color=self.japan_color_var.get(),
+            merge=self.holdings_tab.merge_var.get(),
             **self.summary_tab.ui_state(), **self.heatmap_tab.ui_state(),
         )
         self.dividend_tab.stop()
@@ -1909,7 +1919,8 @@ def trade_marks(trades: list[Trade]) -> list[TradeMark]:
 
 def main() -> int:
     root = tk.Tk()
-    root.title("ToreCan asset")
+    apply_theme(root)  # ToreCan の色・フォント(gui_theme.py)
+    root.title(app_title("asset"))
     root.geometry("1400x820")
     store = AssetStore()
     try:
@@ -1934,6 +1945,9 @@ def main() -> int:
         messagebox.showerror(APP_NAME, str(e), parent=root)
         return 1
     app.pack(fill="both", expand=True)
+    # 引数のタブで起動する(python fina_asset.py --tab dividend)
+    if "--tab" in sys.argv[1:-1]:
+        app.select_tab(sys.argv[sys.argv.index("--tab") + 1])
 
     def on_close():
         if app.save_ui() or messagebox.askyesno(APP_NAME, "保存せずに終了しますか?", parent=root):

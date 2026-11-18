@@ -55,7 +55,9 @@ from matplotlib.patches import FancyArrowPatch, Polygon, Rectangle
 from matplotlib.path import Path as MplPath
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
+from gui_theme import apply_theme
 from core_gather import csv_path_for, load_saved
+from core_settings import app_title, market_colors
 from core_stocks import load_listed, load_stock_names, stock_index
 from gui_widgets import StockSearchBox
 from core_indicators import Indicator, SMAEssential3
@@ -65,8 +67,8 @@ from core_condition import CONDITIONS
 # チャート内の日本語(凡例など)を表示できるフォント。先頭から順に、見つかったものを使う
 matplotlib.rcParams["font.family"] = ["Yu Gothic", "Meiryo", "MS Gothic", "sans-serif"]
 
-UP_COLOR = "#26a69a"    # 陽線(緑)
-DOWN_COLOR = "#ef5350"  # 陰線(赤)
+# 陽線・陰線の色。全体設定(settings.json)の色の決まりに従う(海外式: 上昇が緑、日本式: 上昇が赤)
+UP_COLOR, DOWN_COLOR = market_colors()
 # 図形の色の候補。先頭が最初の色
 DRAW_COLORS = ["#2962ff", "#f23645", "#089981", "#ff9800", "#9c27b0", "#131722"]
 
@@ -1091,7 +1093,8 @@ class ChartFrame(ttk.Frame):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("ToreCan chart")
+    apply_theme(root)  # ToreCan の色・フォント(gui_theme.py)
+    root.title(app_title("chart"))
     root.geometry("1200x820")
     ChartFrame(root, sys.argv[1] if len(sys.argv) > 1 else None).pack(fill="both", expand=True)
     root.mainloop()

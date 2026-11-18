@@ -33,3 +33,16 @@ dividend_cache.json.tmp
 # 業績のキャッシュ(fina_compare.py が yfinance から取得。git 管理外)
 financials_cache.json
 financials_cache.json.tmp
+
+# 全体設定(個人ごとの値。データフォルダの場所など。git 管理外)
+settings.json
+settings.json.tmp
+settings.json.bak
+
+# ToreCan.py のログとロックファイル(git 管理外)
+logs/
+torecan.lock
+gather.lock
+
+# 初期化したときに移した保存ファイル(git 管理外)
+backup/

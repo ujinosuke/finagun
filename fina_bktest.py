@@ -31,7 +31,8 @@
 先に core_gather.py で株価を最新にしておくこと。
 
 使い方:
-    python fina_bktest.py
+    python fina_bktest.py           # 銘柄を選んで始める
+    python fina_bktest.py 7203      # 指定した銘柄でバックテストを始める
 """
 
 import math
@@ -47,7 +48,9 @@ from tkinter import messagebox, ttk
 
 import pandas as pd
 
+from gui_theme import apply_theme
 from gui_chart import ChartFrame, TradeMark
+from core_settings import app_title
 from core_gather import START_DATE, csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from core_strategies import FILL_CLOSE, FILL_MODES, Exit, Strategy, Trade, all_strategies
@@ -603,7 +606,8 @@ class DetailTab(ttk.Frame):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("ToreCan backtest")
+    apply_theme(root)  # ToreCan の色・フォント(gui_theme.py)
+    root.title(app_title("backtest"))
     root.geometry("1500x940")
     try:
         frame = BacktestFrame(root)
@@ -611,6 +615,9 @@ def main() -> int:
         messagebox.showerror("fina_bktest", str(e), parent=root)
         return 1
     frame.pack(fill="both", expand=True)
+    if len(sys.argv) > 1:  # 引数の銘柄でバックテストを始める(python fina_bktest.py 7203)
+        code = sys.argv[1].upper().removesuffix(".T")
+        root.after(100, lambda: frame.run(code))
 
     def on_close():
         frame.stop()

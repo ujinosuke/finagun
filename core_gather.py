@@ -7,6 +7,9 @@ listed_stocks フォルダの最新の銘柄一覧 CSV(例: T2610.csv)に載っ�
 
 速く取得するため、複数の銘柄をまとめて(BATCH_SIZE 銘柄ずつ)yfinance に問い合わせる。
 
+ToreCan.py(ホーム画面)からも、別スレッドで実行する(進み具合の通知と中止ができる)。
+同じ CSV に 2 か所から書き込まないよう、実行中はルートに gather.lock を置き、同時には実行しない。
+
 使い方:
     python core_gather.py              # 銘柄一覧の全銘柄を取得・更新
     python core_gather.py 7203 6758    # 指定した銘柄だけを取得・更新
@@ -14,18 +17,25 @@ listed_stocks フォルダの最新の銘柄一覧 CSV(例: T2610.csv)に載っ�
 
 import logging
 import sys
+import threading
 import time
-from collections import defaultdict
-from datetime import datetime
+from collections import Counter, defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
 
-BASE_DIR = Path(__file__).resolve().parent
-LISTED_STOCKS_DIR = BASE_DIR / "listed_stocks"
-STOCK_DATABASE_DIR = BASE_DIR / "stock_database"
+from core_settings import APP_DIR, acquire_lock, data_root, release_lock
+
+# BASE_DIR は保存ファイル(asset.json など)を置くプログラムのフォルダ。
+# 株価データ・銘柄一覧のフォルダは、全体設定(settings.json)のデータフォルダの中(既定はプログラムのフォルダ)
+BASE_DIR = APP_DIR
+LISTED_STOCKS_DIR = data_root() / "listed_stocks"
+STOCK_DATABASE_DIR = data_root() / "stock_database"
 
 START_DATE = "2016-01-01"
 COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
@@ -39,6 +49,8 @@ BATCH_SIZE = 100
 BATCH_INTERVAL = 1.0
 # 失敗した銘柄をもう一度試す前の待ち時間(秒)。一時的なエラーやアクセス制限に備える
 RETRY_WAIT = 30
+# データ更新の実行中に置くロックファイル(同時に 2 か所から更新しないため)
+GATHER_LOCK = APP_DIR / "gather.lock"
 # 取得しない市場。PRO Market はプロ投資家向けで個人は通常売買できず、Yahoo にデータがない銘柄も多い
 EXCLUDED_MARKETS = {"PRO Market"}
 
@@ -136,14 +148,36 @@ def in_batches(codes: list[str]):
         yield codes[i: i + BATCH_SIZE]
 
 
-class Gatherer:
-    """銘柄の取得・更新をまとめて行い、結果を記録する。"""
+class GatherCancelled(Exception):
+    """データ更新が中止された。"""
 
-    def __init__(self):
+
+class GatherBusy(Exception):
+    """別の画面(ホームやコマンドライン)でデータ更新を実行中。"""
+
+
+class Gatherer:
+    """銘柄の取得・更新をまとめて行い、結果を記録する。
+
+    on_progress を渡すと、まとめた問い合わせのたびに (処理済みの銘柄数, 全体の銘柄数) を渡して呼ぶ
+    (渡さなければ、今までどおり進み具合を表示する)。cancel が立っていたら、次の問い合わせの前で止める
+    (GatherCancelled)。問い合わせの切れ目で止めるので、CSV の書き込みの途中では止まらない。
+    """
+
+    def __init__(self, on_progress: Callable[[int, int], None] | None = None,
+                 cancel: threading.Event | None = None, total: int = 0):
         self.results: dict[str, str] = {}  # コード -> 結果のメッセージ
         self.requests = 0
+        self.on_progress = on_progress
+        self.cancel = cancel
+        self.total = total
+
+    def check_cancel(self) -> None:
+        if self.cancel is not None and self.cancel.is_set():
+            raise GatherCancelled()
 
     def _download(self, codes: list[str], start: str) -> dict[str, pd.DataFrame]:
+        self.check_cancel()
         if self.requests:
             time.sleep(BATCH_INTERVAL)
         self.requests += 1
@@ -192,15 +226,30 @@ class Gatherer:
             self.fetch_full(refetch, reason="再取得")
 
     def _progress(self) -> None:
-        print(f"  ... {len(self.results)} 銘柄 処理済み", flush=True)
+        if self.on_progress is not None:
+            self.on_progress(len(self.results), self.total)
+        else:
+            print(f"  ... {len(self.results)} 銘柄 処理済み", flush=True)
 
     def failed(self) -> list[str]:
         return [code for code, message in self.results.items() if message.startswith("[失敗]")]
 
 
-def gather(codes: list[str]) -> Gatherer:
-    """銘柄を取得・更新する。失敗した銘柄は、少し待ってからもう一度だけ試す。"""
-    gatherer = Gatherer()
+def gather(codes: list[str], on_progress: Callable[[int, int], None] | None = None,
+           cancel: threading.Event | None = None) -> Gatherer:
+    """銘柄を取得・更新する。失敗した銘柄は、少し待ってからもう一度だけ試す。
+
+    別の画面で実行中なら GatherBusy、中止されたら GatherCancelled を投げる。
+    """
+    if not acquire_lock(GATHER_LOCK):
+        raise GatherBusy("別の画面(ホームやコマンドライン)でデータ更新を実行中です")
+    try:
+        return _gather(codes, Gatherer(on_progress, cancel, len(codes)))
+    finally:
+        release_lock(GATHER_LOCK)
+
+
+def _gather(codes: list[str], gatherer: Gatherer) -> Gatherer:
     for attempt in range(2):
         last_rows = {code: load_last_row(csv_path_for(code)) for code in codes}
         new_codes = [code for code, last in last_rows.items() if last is None]
@@ -211,9 +260,73 @@ def gather(codes: list[str]) -> Gatherer:
         codes = gatherer.failed()
         if not codes or attempt == 1:
             break
-        print(f"{len(codes)} 銘柄が失敗したので、{RETRY_WAIT} 秒後にもう一度試します")
-        time.sleep(RETRY_WAIT)
+        if gatherer.on_progress is None:
+            print(f"{len(codes)} 銘柄が失敗したので、{RETRY_WAIT} 秒後にもう一度試します")
+        # 待っている間も中止が効くよう、少しずつ待つ
+        for _ in range(int(RETRY_WAIT / 0.5)):
+            gatherer.check_cancel()
+            time.sleep(0.5)
     return gatherer
+
+
+# ---- データの状態(ToreCan のホーム画面で表示する) ----
+
+@dataclass(frozen=True)
+class DataStatus:
+    """保存済みの株価データと銘柄一覧の状態。"""
+    files: int                 # 収録銘柄数(stock_database の T*.csv の数)
+    latest: str | None         # 一番多くの銘柄がそろっている最終日("市場の最終日"とみなす)
+    behind: int                # 最終日が latest より古い銘柄数(売買停止・上場廃止・取得失敗など)
+    expected: str              # 本来そろっているはずの最終日(expected_last_day)
+    listed_name: str | None    # 最新の銘柄一覧(例 "T2610")
+    listed_missing: int        # 銘柄一覧にあるのに CSV がない銘柄数
+
+    @property
+    def up_to_date(self) -> bool:
+        return self.latest is not None and self.latest >= self.expected
+
+
+def expected_last_day(now: datetime | None = None) -> str:
+    """データがそろっているはずの最終日。日本時間で MARKET_DATA_READY_HOUR 時より前なら前の平日まで。
+
+    祝日は考えない(祝日の翌日などは「更新が必要」と出ることがあるが、更新しても「更新分なし」になるだけ)。
+    """
+    now = now or datetime.now(JST)
+    day = now.date() - timedelta(days=1 if now.hour < MARKET_DATA_READY_HOUR else 0)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day.isoformat()
+
+
+def listed_month(name: str) -> tuple[int, int] | None:
+    """銘柄一覧の名前 "T2610" -> (2026, 10)。"""
+    try:
+        return 2000 + int(name[1:3]), int(name[3:5])
+    except (ValueError, IndexError):
+        return None
+
+
+def data_status(now: datetime | None = None) -> DataStatus:
+    """株価データの最終日・銘柄数と、銘柄一覧の状態を調べる(各 CSV の末尾だけを読む。数秒かかる)。"""
+    paths = sorted(STOCK_DATABASE_DIR.glob("T*.csv")) if STOCK_DATABASE_DIR.is_dir() else []
+    last_days = Counter()
+    for path in paths:
+        try:
+            last = load_last_row(path)
+        except (OSError, ValueError, UnicodeDecodeError):
+            last = None
+        last_days[f"{last.name:%Y-%m-%d}" if last is not None else ""] += 1
+    dated = {day: n for day, n in last_days.items() if day}
+    latest = max(dated, key=lambda day: (dated[day], day)) if dated else None
+    behind = sum(n for day, n in last_days.items() if latest is None or day < latest)
+    try:
+        listed_csv = latest_listed_stocks_csv()
+        saved = {p.stem[1:] for p in paths}
+        missing = sum(1 for code in listed_codes(listed_csv) if code not in saved)
+        name = listed_csv.stem
+    except (FileNotFoundError, OSError, KeyError):
+        name, missing = None, 0
+    return DataStatus(len(paths), latest, behind, expected_last_day(now), name, missing)
 
 
 def main() -> int:
@@ -227,7 +340,11 @@ def main() -> int:
         print(f"{listed_csv.name} に載っている {len(codes)} 銘柄を取得します")
 
     started = time.time()
-    gatherer = gather(codes)
+    try:
+        gatherer = gather(codes)
+    except GatherBusy as e:
+        print(e)
+        return 2
     elapsed = time.time() - started
 
     # 結果: 銘柄数が少なければ 1 銘柄ずつ、多ければ種類ごとの件数を表示する

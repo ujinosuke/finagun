@@ -29,6 +29,7 @@
 (除いた日は、下のお知らせ欄に出す)。
 
 登録した銘柄と表示の設定は、ルートディレクトリの compare.json に保存し、次回の起動時に自動で読み込む。
+ベンチマークと相関の期間は、全プログラム共通の settings.json に保存する(ToreCan のホームの設定と同じ値)。
 
 使い方:
     python fina_compare.py              # 前回の銘柄で起動
@@ -71,6 +72,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from gui_theme import apply_theme
+from core_settings import app_title, load_settings, settings_exist, update_settings
 from core_compare import (
     BENCHMARKS, CORRELATION_PERIODS, ITEMS, Correlation, Financials, FinancialsCache, TechMetrics,
     aligned_years, beta, cagr, correlation_matrix, drop_glitches, fetch_financials, growth, indexed,
@@ -291,7 +294,7 @@ def read_compare() -> dict:
         "corr_period": "1年", "fin_item": "revenue", "fin_mode": "chart", "fin_table": "amount",
     }
     if not COMPARE_PATH.exists():
-        return state
+        return with_global_settings(state)
     with open(COMPARE_PATH, encoding="utf-8") as f:
         data = json.load(f)
     codes = data.get("codes") if isinstance(data, dict) else None
@@ -309,14 +312,33 @@ def read_compare() -> dict:
     groups = data.get("column_groups")
     if isinstance(groups, list):
         state["column_groups"] = [g for g in COLUMN_GROUPS if g in groups]
+    # 前の版は compare.json にベンチマーク・相関の期間を持っていた。settings.json がまだなければ引き継ぐ
+    if not settings_exist() and ("benchmark" in data or "corr_period" in data):
+        try:
+            update_settings(benchmark=state["benchmark"], corr_period=state["corr_period"])
+        except OSError:
+            pass
+    return with_global_settings(state)
+
+
+def with_global_settings(state: dict) -> dict:
+    """ベンチマークと相関の期間は、全体設定(settings.json)の値を使う(ToreCan のホームの設定と同じ値)。"""
+    settings = load_settings()
+    state["benchmark"] = settings.benchmark if settings.benchmark in BENCHMARKS else next(iter(BENCHMARKS))
+    state["corr_period"] = settings.corr_period if settings.corr_period in CORRELATION_PERIODS else "1年"
     return state
+
+
+GLOBAL_KEYS = ("benchmark", "corr_period")  # settings.json に持つ項目
 
 
 def write_compare(state: dict) -> None:
     """compare.json に保存する。途中で止まっても元のファイルが壊れないよう、別のファイルから置き換える。"""
     temporary = COMPARE_PATH.with_name(COMPARE_PATH.name + ".tmp")
     with open(temporary, "w", encoding="utf-8") as f:
-        json.dump({"version": FORMAT_VERSION, **state}, f, ensure_ascii=False, indent=2)
+        # ベンチマークと相関の期間は settings.json に持つので、compare.json には書かない
+        saved = {k: v for k, v in state.items() if k not in GLOBAL_KEYS}
+        json.dump({"version": FORMAT_VERSION, **saved}, f, ensure_ascii=False, indent=2)
     os.replace(temporary, COMPARE_PATH)
 
 
@@ -419,9 +441,16 @@ class CompareApp(ttk.Frame):
     def set_benchmark(self, code: str) -> None:
         """ベンチマークを変える(比較表の β も計算し直す)。"""
         self.settings["benchmark"] = code
-        self.save()
+        self.save_global(benchmark=code)
         self.compute_tech(self.codes)
         self.refresh()
+
+    def save_global(self, **changes) -> None:
+        """全体設定(settings.json)の一部を変えて保存する(ベンチマーク・相関の期間)。"""
+        try:
+            update_settings(**changes)
+        except OSError as e:
+            messagebox.showerror(APP_NAME, f"settings.json に保存できません。\n{e}", parent=self)
 
     def save(self) -> None:
         if hasattr(self, "views"):  # 表示中のビューも保存する
@@ -948,7 +977,7 @@ class CorrelationView(ttk.Frame):
 
     def _on_period(self):
         self.app.settings["corr_period"] = self.period_var.get()
-        self.app.save()
+        self.app.save_global(corr_period=self.period_var.get())
         self.show()
 
     def _on_benchmark(self):
@@ -1397,7 +1426,8 @@ class ExcelWriter:
 
 def main() -> int:
     root = tk.Tk()
-    root.title("ToreCan compare")
+    apply_theme(root)  # ToreCan の色・フォント(gui_theme.py)
+    root.title(app_title("compare"))
     root.geometry("1300x700")
     try:
         settings = read_compare()

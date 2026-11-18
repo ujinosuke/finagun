@@ -10,6 +10,7 @@ ToreCan は、金融・投資系のプログラム集です。
 
 - すべてのプログラムは Python(3.12 以上)で記述されています。
 - GUI エンジンは tkinter です。
+- バージョンは `core_settings.py` の `__version__` で管理しています(今は **0.3.0**)。ホーム画面と各プログラムのタイトルバーに表示されます。
 
 ## トレード方針
 
@@ -24,7 +25,7 @@ ToreCan は、金融・投資系のプログラム集です。
 
 | ファイル | 内容 |
 |---|---|
-| `ToreCan.py` | 統合プログラム。ホーム画面 |
+| `ToreCan.py` | 統合プログラム。ホーム画面。左端のアイコンレールから各プログラムを起動。資産のまとめ、株価データの状態とデータ更新、銘柄一覧の月次更新の案内、ポートフォリオ・ヒートマップ、全体設定。1 つしか起動できない。設計は `ToreCan_design.md` |
 | `fina_asset.py` | 資産管理プログラム。取引の手入力・証券会社の CSV の取り込みから、保有(銘柄 × 証券会社 × 口座区分)・評価額・含み損益・実現損益を集計する。資産推移と配分のグラフ、配当の参考表示、ヒートマップもある。記録は `asset.json` に保存する。仕様は `fina_asset_spec.md`、設計は `fina_asset_design.md`・`fina_asset_design_phase2.md` |
 | `fina_bktest.py` | バックテストを行うプログラム |
 | `fina_techtrainer.py` | テクニカルトレードの訓練用プログラム |
@@ -43,6 +44,8 @@ ToreCan は、金融・投資系のプログラム集です。
 | `gui_chart.py` | チャート表示の基本プログラム。matplotlib を使用する |
 | `gui_widgets.py` | 複数のプログラムで使い回す tkinter の部品(銘柄の検索欄 `StockSearchBox`、ウォッチリストへの追加 `add_to_watchlist` など) |
 | `gui_treemap.py` | ツリーマップ(ヒートマップ)の描画部品。四角の大きさで量を、色で上がり下がりを示す |
+| `gui_theme.py` | 全プログラム共通の見た目(色・フォント・余白の ttk テーマ)。各プログラムの起動時に `apply_theme(root)` で当てる |
+| `gui_icons.py` | アイコン(Material Icons の Filled。`icons/` の PNG)の読み込みと、フォントからの PNG の作成 |
 | `gui_corrmatrix.py` | 相関マトリクスの描画部品。+1 に近いほど青、-1 に近いほど赤で、計算に使った日数も出す |
 
 #### 計算系(`core_`)… 画面を持たない、計算・データの処理
@@ -57,6 +60,8 @@ ToreCan は、金融・投資系のプログラム集です。
 | `core_dividend.py` | yfinance から保有銘柄の配当情報を取得し、`dividend_cache.json` にキャッシュする |
 | `core_compare.py` | 銘柄比較の計算。テクニカル指標・相関・ベータ(保存済みの日足から)と、業績の取得(yfinance。`financials_cache.json` にキャッシュ) |
 | `core_watchlist.py` | ウォッチリストの保存ファイル(`watchlist.json`)の読み書き。他のプログラムから銘柄を足すのにも使う |
+| `core_reset.py` | 保存ファイルの初期化(ホームの設定から使う)。消すのではなく `backup/` に移す |
+| `core_settings.py` | ToreCan のバージョン(`__version__`)と、全プログラム共通の設定(`settings.json`)。データフォルダの場所・色の決まり・ロックファイルもここ |
 | `core_stocks.py` | 銘柄一覧の読み込みと、銘柄コード・銘柄名での銘柄の検索(GUI を含まない部分) |
 | `core_strategies.py` | ストラテジーの基本クラスとその種類 |
 | `core_indicators.py` | インジケーターの基本クラスとその種類 |
@@ -77,6 +82,29 @@ ToreCan は、金融・投資系のプログラム集です。
 | `listed_stocks/` | 銘柄一覧。毎月更新する。例: `T2610.xls`(東証 2026 年 10 月の銘柄)。この xls から `core_listup_stocks.py` で生成した CSV も置く |
 | `stock_database/` | 各銘柄ごとの CSV ファイル(例: `T7203.csv`)。2016 年 1 月以降の日足データ(OHLCV) |
 
+この 2 つのフォルダは、既定ではプログラムのフォルダに置きます。別の場所に置くときは、ホーム画面の「設定」のデータフォルダで、2 つを入れたフォルダを指定します。
+
+## 全体設定(settings.json。git 管理外)
+
+全プログラム共通の設定です。ホーム画面(`ToreCan.py`)の「設定」で変えます。各プログラムは起動時に読むので、開いているプログラムは起動し直すと反映されます。
+
+| 項目 | 内容 | 既定 |
+|---|---|---|
+| 色の決まり | 海外式(上昇・利益が緑)/ 日本式(上昇・利益が赤)。チャートのローソク足・売買の印と、資産管理の ± の数値に使う(相関の色は固定) | 海外式 |
+| ベンチマーク | 銘柄比較の相関・ベータの相手(1306 TOPIX など) | 1306 |
+| 相関の期間 | 銘柄比較の相関の期間 | 1年 |
+| データフォルダ | `listed_stocks/`・`stock_database/` を入れたフォルダ | プログラムのフォルダ |
+
+## 更新履歴
+
+バージョンの上げ方: 機能を足したらマイナー(0.**1**.0)、直しだけならパッチ(0.1.**1**)を上げ、ここに 1 行足します。
+
+| バージョン | 日付 | 内容 |
+|---|---|---|
+| 0.3.0 | 2026-11-18 | 設定に「初期化」を追加(プログラムごと・すべて。保存ファイルは backup フォルダに移す)。アイコンレールのアイコンを小さく(32px) |
+| 0.2.0 | 2026-11-18 | 見た目を一新(全プログラム共通のテーマ・Material Icons)。ホーム画面を左端のアイコンレール+ダッシュボードにし、ポートフォリオ・ヒートマップを追加 |
+| 0.1.0 | 2026-11-18 | ホーム画面(ToreCan.py)と全体設定を追加。バージョンの表示を始める |
+
 ## 必要環境
 
 - Python 3.12 以上
@@ -94,12 +122,12 @@ pip install -r requirements.txt
 ## 使い方
 
 ```bash
-python ToreCan.py            # ホーム画面
-python fina_asset.py         # 資産管理
-python fina_bktest.py        # バックテスト
+python ToreCan.py            # ホーム画面(ここから各プログラムを起動できる)
+python fina_asset.py         # 資産管理(--tab dividend などで、開くタブを指定できる)
+python fina_bktest.py        # バックテスト(銘柄コードを指定すると、その銘柄で始める)
 python fina_techtrainer.py   # テクニカルトレードの訓練
-python fina_screening.py     # スクリーニング(先に core_gather.py で株価を最新にしておく)
-python fina_watchlist.py     # ウォッチリスト(登録内容はルートの watchlist.json に保存される)
+python fina_screening.py     # スクリーニング(先に株価を最新にしておく。--market グロース などで市場を指定できる)
+python fina_watchlist.py     # ウォッチリスト(登録内容はルートの watchlist.json に保存される。銘柄コードを指定できる)
 python fina_compare.py       # 銘柄の比較表(登録内容はルートの compare.json に保存される)
 python core_listup_stocks.py # 銘柄一覧の CSV 生成
 python core_gather.py        # 銘柄情報の取得

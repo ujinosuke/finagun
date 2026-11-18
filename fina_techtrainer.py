@@ -54,7 +54,9 @@ import pandas as pd
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
+from gui_theme import apply_theme
 from gui_chart import BUY_COLOR, DOWN_COLOR, SELL_COLOR, UP_COLOR, ChartFrame, TradeMark
+from core_settings import app_title
 from core_gather import BASE_DIR, csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from core_strategies import FILL_MODES, Strategy, all_strategies
@@ -788,7 +790,8 @@ class ReportWindow(tk.Toplevel):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("ToreCan techtrainer")
+    apply_theme(root)  # ToreCan の色・フォント(gui_theme.py)
+    root.title(app_title("techtrainer"))
     root.geometry("1600x900")
     try:
         frame = TrainerFrame(root)

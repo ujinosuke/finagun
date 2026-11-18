@@ -6,6 +6,23 @@
 - GUI は tkinter で作る。
 - コメントは日本語で書く。
 
+## バージョン
+
+- バージョンは `core_settings.py` の `__version__` の 1 か所だけで管理する(ホーム画面と各プログラムのタイトルバーに出る)。
+- 機能を足したらマイナー(0.**1**.0)、直しだけならパッチ(0.1.**1**)を上げ、README.md の「更新履歴」に 1 行足す。
+- 新しい主要プログラムのタイトルバーは `app_title("名前")` で作る。
+
+## 見た目
+
+- 主要プログラムの `main()` では、`tk.Tk()` を作った直後に `gui_theme.apply_theme(root)` を呼ぶ。
+- 色・フォント・余白は `gui_theme.py` の定数(`ACCENT`・`CARD`・`PAD` など)とスタイル名(`Card.TFrame`・`Accent.TButton` など)を使い、部品ごとに直接書かない。
+- アイコンは `gui_icons.icon("名前", サイズ, 色)` で使う(Material Icons の Filled。足すときは `gui_icons.ICONS` に足して PNG を作る)。
+
+## 全体設定
+
+- 全プログラム共通の設定は `settings.json`(`core_settings.py` で読み書き)に置く。プログラムごとの保存ファイルに同じ設定を重ねて持たない。
+- 上昇・下落(利益・損失)の色は `core_settings.market_colors()`(チャート)・`profit_colors()`(文字)を使い、色を直接書かない。
+
 ## ファイル名の接頭語
 
 新しいファイルを作るときは、役割に合わせて次の接頭語を付ける。
@@ -17,6 +34,7 @@
 | `core_` | 裏方の計算系。画面を持たない計算・データの処理 | `core_strategies.py`、`core_gather.py` |
 | `usr_` | ユーザー編集可能なプログラム | `usr_strategies.py` |
 
+- 例外: 全体の入り口のホーム画面は `ToreCan.py`(接頭語なし)。
 - `core_` のファイルでは tkinter を使わない(画面の部品は `gui_` に置く)。
 - ファイルを追加・改名したら、README.md のプログラム一覧も直す。
 

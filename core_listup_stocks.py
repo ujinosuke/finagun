@@ -14,7 +14,10 @@ from pathlib import Path
 
 import pandas as pd
 
-LISTED_STOCKS_DIR = Path(__file__).resolve().parent / "listed_stocks"
+from core_settings import data_root
+
+# 銘柄一覧のフォルダ(全体設定のデータフォルダの中。core_gather.py と同じ場所)
+LISTED_STOCKS_DIR = data_root() / "listed_stocks"
 EXCEL_SUFFIXES = (".xls", ".xlsx")
 
 

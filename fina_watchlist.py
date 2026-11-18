@@ -12,7 +12,8 @@
 先に core_gather.py で株価を取得しておくこと。
 
 使い方:
-    python fina_watchlist.py
+    python fina_watchlist.py         # 前回の状態で起動
+    python fina_watchlist.py 7203    # 指定した銘柄を選んだ状態で起動(登録していなければチャートだけ)
 
 操作:
     グループ        上の欄で選ぶ。「新規」「名前変更」「削除」ボタンで編集する
@@ -32,7 +33,9 @@ import sys
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
+from gui_theme import apply_theme
 from gui_chart import ChartFrame
+from core_settings import app_title
 from core_gather import csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from core_watchlist import (
@@ -248,6 +251,19 @@ class WatchlistFrame(ttk.Frame):
 
     # ---- 銘柄の登録 ----
 
+    def show_code(self, code: str) -> None:
+        """銘柄を選ぶ。登録済みのグループ(選択中のグループを優先)を探し、どこにもなければチャートだけ出す。"""
+        order = [self.group_index, *(i for i in range(len(self.groups)) if i != self.group_index)]
+        for i in order:
+            if code in self.groups[i]["codes"]:
+                self.group_index = i
+                self._refresh_groups()
+                self._refresh_stocks(select=code)
+                return
+        if csv_path_for(code).exists():
+            self.chart.set_code(code)
+            self.status_var.set(f"{code} はウォッチリストに登録されていません(チャートだけ表示しています)。")
+
     def add_stock(self, code: str) -> None:
         """銘柄を選択中のグループに登録して選ぶ。登録済みなら選ぶだけ。"""
         added = code not in self.group["codes"]
@@ -337,7 +353,8 @@ class WatchlistFrame(ttk.Frame):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("ToreCan watchlist")
+    apply_theme(root)  # ToreCan の色・フォント(gui_theme.py)
+    root.title(app_title("watchlist"))
     root.geometry("1600x880")
     try:
         data = read_watchlist()
@@ -361,6 +378,8 @@ def main() -> int:
         messagebox.showerror("fina_watchlist", str(e), parent=root)
         return 1
     frame.pack(fill="both", expand=True)
+    if len(sys.argv) > 1:  # 引数の銘柄を選んだ状態で起動する(python fina_watchlist.py 7203)
+        frame.show_code(sys.argv[1].upper().removesuffix(".T"))
 
     def on_close():
         # 最後に描いた図形や表示の設定を保存する。保存できなければ、閉じるかどうかを尋ねる

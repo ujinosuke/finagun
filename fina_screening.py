@@ -9,7 +9,8 @@ core_condition.py に登録されているすべてのコンディション(COND
 先に core_gather.py で全銘柄の株価を最新にしておくこと。
 
 使い方:
-    python fina_screening.py
+    python fina_screening.py                   # プライムを選んだ状態で起動
+    python fina_screening.py --market グロース  # 市場を選んだ状態で起動(プライム・スタンダード・グロース・すべて)
 
 操作:
     スクリーニング  市場を選んで「スクリーニング」ボタン(実行中は「中止」になる)
@@ -38,7 +39,9 @@ from tkinter import messagebox, ttk
 
 import pandas as pd
 
+from gui_theme import apply_theme
 from gui_chart import ChartFrame
+from core_settings import app_title
 from core_condition import CONDITIONS
 from core_gather import csv_path_for, load_saved
 from core_stocks import load_listed
@@ -377,7 +380,8 @@ class ScreeningFrame(ttk.Frame):
 
 def main() -> int:
     root = tk.Tk()
-    root.title("ToreCan screening")
+    apply_theme(root)  # ToreCan の色・フォント(gui_theme.py)
+    root.title(app_title("screening"))
     root.geometry("1700x880")
     try:
         frame = ScreeningFrame(root)
@@ -385,6 +389,11 @@ def main() -> int:
         messagebox.showerror("fina_screening", str(e), parent=root)
         return 1
     frame.pack(fill="both", expand=True)
+    # 引数の市場を選んだ状態で起動する(python fina_screening.py --market グロース)
+    if "--market" in sys.argv[1:-1]:
+        market = sys.argv[sys.argv.index("--market") + 1]
+        if market in MARKETS:
+            frame.market_var.set(market)
 
     def on_close():
         frame.stop()

@@ -211,6 +211,74 @@ def group_key(broker: str, account: str) -> str:
     return f"{broker}|{account}"
 
 
+def day_change(valuations: list[Valuation]) -> tuple[float, float | None]:
+    """前日比の合計 (金額, %)。Σ 数量 × (終値 − 前日の終値)。前日の終値がない保有は数えない。"""
+    change = previous = 0.0
+    for v in valuations:
+        if v.quote is None or v.quote.prev_close is None or v.value_jpy is None:
+            continue
+        size = v.holding.quantity * v.holding.multiplier
+        change += size * (v.quote.close - v.quote.prev_close)
+        previous += size * v.quote.prev_close
+    return change, (change / previous * 100 if previous else None)
+
+
+@dataclass(frozen=True)
+class OverviewItem:
+    """ホーム画面のヒートマップに出す 1 銘柄(証券会社・口座をまたいで合算)。"""
+    instrument: Instrument
+    value: float                   # 評価額(円)
+    unrealized_pct: float | None   # 含み損益率(%)
+    change_pct: float | None       # 前日比(%)
+
+
+@dataclass(frozen=True)
+class AssetOverview:
+    """ToreCan のホーム画面に出す資産のまとめ。"""
+    summary: Summary
+    change: float              # 前日比(円)
+    change_pct: float | None   # 前日比(%)
+    holdings: int              # 保有の数
+    items: list[OverviewItem] = field(default_factory=list)  # 銘柄ごと(評価額のあるものだけ)
+
+
+def overview_items(valuations: list[Valuation]) -> list[OverviewItem]:
+    """評価を銘柄ごとに合算する(評価額のない保有は除く)。"""
+    merged: dict[str, list] = {}  # 商品 ID -> [評価、評価額、取得原価]
+    for v in valuations:
+        if v.value_jpy is None:
+            continue
+        item = merged.setdefault(v.instrument.id, [v, 0.0, 0.0])
+        item[1] += v.value_jpy
+        item[2] += v.cost_jpy
+    return [
+        OverviewItem(v.instrument, value, (value - cost) / cost * 100 if cost else None, v.change_pct)
+        for v, value, cost in merged.values()
+    ]
+
+
+def asset_overview(path, today: str, prices: PriceSource | None = None,
+                   add_snapshot: bool = False) -> AssetOverview | None:
+    """asset.json を読んで資産のまとめを作る。取引がなければ None。
+
+    add_snapshot なら、今日の記録がなければ 1 件足して、すぐ保存する(今日の記録があれば置き換えない。
+    置き換えるのは fina_asset だけ)。fina_asset が開いている間に古い内容で取引を上書きしないよう、
+    読み込みから保存までを、この関数の中で続けて行う。
+    """
+    store = AssetStore(path)
+    store.load()
+    if not store.trades:
+        return None
+    ledger = build_ledger(store.trades, store.instruments)
+    valuations = value_all(ledger, store.instruments, prices or PriceBook())
+    summary = summarize(valuations, ledger.realized, today)
+    if add_snapshot and not any(s.date == today for s in store.snapshots):
+        record_snapshot(store, summary, today)
+        store.save()
+    change, change_pct = day_change(valuations)
+    return AssetOverview(summary, change, change_pct, len(ledger.holdings), overview_items(valuations))
+
+
 # ---- 資産推移のスナップショット ----
 
 def record_snapshot(store: AssetStore, summary: Summary, today: str) -> bool:
