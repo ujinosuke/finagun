@@ -25,7 +25,7 @@ ToreCan は、金融・投資系のプログラム集です。
 | ファイル | 内容 |
 |---|---|
 | `ToreCan.py` | 統合プログラム。ホーム画面 |
-| `fina_asset.py` | 資産管理プログラム |
+| `fina_asset.py` | 資産管理プログラム。取引を手入力すると、保有(銘柄 × 証券会社 × 口座区分)・評価額・含み損益・実現損益を集計する。記録は `asset.json` に保存する。仕様は `fina_asset_spec.md`、設計は `fina_asset_design.md` |
 | `fina_bktest.py` | バックテストを行うプログラム |
 | `fina_techtrainer.py` | テクニカルトレードの訓練用プログラム |
 | `fina_screening.py` | スクリーニングプログラム |
@@ -49,6 +49,8 @@ ToreCan は、金融・投資系のプログラム集です。
 |---|---|
 | `core_gather.py` | yfinance を使って、銘柄一覧に載っている全銘柄(PRO Market を除く)の日足データを取得する。CSV 形式で保存される。2 回目以降は更新分だけを取得する |
 | `core_listup_stocks.py` | 東証プライムなどの銘柄一覧データ(`data.xls`)から CSV を生成する |
+| `core_asset.py` | 資産管理のデータ(商品・取引・保有)と保存、取引からの保有集計(移動平均法)・実現損益 |
+| `core_asset_value.py` | 資産管理の評価(資産クラスごとの評価額・含み損益)と、資産推移のスナップショット |
 | `core_stocks.py` | 銘柄一覧の読み込みと、銘柄コード・銘柄名での銘柄の検索(GUI を含まない部分) |
 | `core_strategies.py` | ストラテジーの基本クラスとその種類 |
 | `core_indicators.py` | インジケーターの基本クラスとその種類 |

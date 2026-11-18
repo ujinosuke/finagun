@@ -17,3 +17,8 @@ compare.json.tmp
 compare_*.xlsx
 # テクニカルトレード訓練のレポート(既定のファイル名)
 techtrainer_*.html
+
+# 資産管理の保存ファイル(個人の取引記録。git 管理外)
+asset.json
+asset.json.tmp
+asset.json.bak
