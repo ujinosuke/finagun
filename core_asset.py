@@ -17,6 +17,7 @@
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from enum import StrEnum
 from pathlib import Path
@@ -30,7 +31,13 @@ FORMAT_VERSION = 1
 ACCOUNT_TYPES = ["特定", "一般", "NISA成長", "NISAつみたて", "旧NISA"]
 
 # 売買区分 -> 表示名
-ACTIONS = {"buy": "買い", "sell": "売り", "split": "分割", "swap": "スワップ"}
+ACTIONS = {
+    "buy": "買い", "sell": "売り", "split": "分割",
+    "transfer_in": "入庫",    # 期首の保有・移管で受け入れた分。単価はそのときの取得単価。実現損益なし
+    "transfer_out": "出庫",   # 移管で出した分。平均単価で原価を取り崩す。実現損益なし
+    "swap": "スワップ",
+}
+TRANSFERS = ("transfer_in", "transfer_out")
 
 EPSILON = 1e-9  # 数量が 0 になったとみなす幅(float の誤差を吸収する)
 
@@ -92,6 +99,29 @@ def jp_stock_id(code: str) -> str:
     return f"JP:{code}"
 
 
+def jp_stock_instrument(code: str, listed=None, known: dict[str, "Instrument"] | None = None,
+                        name: str = "") -> "Instrument":
+    """日本株の商品を作る。
+
+    listed(銘柄一覧。コードが行の名前の DataFrame。core_stocks.load_listed() の戻り値)に載っていれば、
+    銘柄名・市場・33 業種をそこから写す。載っていなければ、登録済みの商品(known)、
+    それもなければ name を銘柄名にする(上場廃止の銘柄など)。
+    """
+    if listed is not None and code in listed.index:
+        row = listed.loc[code]
+
+        def value(column):
+            v = row.get(column, "")
+            return v if isinstance(v, str) and v != "-" else ""
+
+        return Instrument(
+            jp_stock_id(code), AssetClass.JP_STOCK, code, value("銘柄名"),
+            market=value("市場・商品区分").split("（")[0], sector=value("33業種区分"),
+        )
+    found = (known or {}).get(jp_stock_id(code))
+    return found or Instrument(jp_stock_id(code), AssetClass.JP_STOCK, code, name)
+
+
 @dataclass
 class Trade:
     """取引 1 件(データの中心)。"""
@@ -130,6 +160,8 @@ class Snapshot:
     unrealized: float     # 含み損益の合計(円)
     realized_total: float # 実現損益の累計(円)
     by_class: dict[str, float] = field(default_factory=dict)  # 資産クラス -> 評価額
+    # "証券会社|口座区分" -> [評価額, 取得原価](証券会社・口座区分で絞り込んだ推移を描くため)
+    by_group: dict[str, list[float]] = field(default_factory=dict)
 
 
 # ---- 保有と実現損益(取引から集計する。保存しない) ----
@@ -195,27 +227,37 @@ class Ledger:
     problems: list[Problem] = field(default_factory=list)
 
 
-def build_ledger(trades: list[Trade], instruments: dict[str, Instrument]) -> Ledger:
+def build_ledger(
+    trades: list[Trade], instruments: dict[str, Instrument],
+    on_date: Callable[[str, dict[HoldingKey, Holding]], None] | None = None,
+) -> Ledger:
     """取引を (約定日、時刻、入力順) の順に処理して、保有と実現損益を集計する(移動平均法)。
 
     保有数量を超える売り(売り建てを許さない資産クラス)は、超えた分を無視して problems に記録する。
     数量が 0 になった保有は holdings から除く。
+    on_date を渡すと、1 日分の取引を処理し終えるたびに (約定日、その時点の保有) を渡して呼ぶ
+    (保有は呼び出しのあとも変わるので、必要なら写しを取ること)。
     """
     ledger = Ledger()
     holdings: dict[HoldingKey, Holding] = {}
-    for trade in sorted(trades, key=lambda t: t.order):
+    ordered = sorted(trades, key=lambda t: t.order)
+    for n, trade in enumerate(ordered):
         instrument = instruments.get(trade.instrument_id)
         if instrument is None:
             ledger.problems.append(Problem(trade.id, f"商品 {trade.instrument_id} が商品マスタにありません。"))
-            continue
-        holding = holdings.setdefault(trade.key, Holding(trade.key, multiplier=instrument.multiplier))
-        if trade.action == "split":
-            _apply_split(ledger, holding, trade)
-        elif trade.action in ("buy", "sell"):
-            _apply_trade(ledger, holding, trade, instrument.rule.allow_short)
-        # swap(FX のスワップ)は Phase 4 で扱う
-        if abs(holding.quantity) < EPSILON:
-            holding.quantity, holding.cost = 0, 0
+        else:
+            holding = holdings.setdefault(trade.key, Holding(trade.key, multiplier=instrument.multiplier))
+            if trade.action == "split":
+                _apply_split(ledger, holding, trade)
+            elif trade.action in TRANSFERS:
+                _apply_transfer(ledger, holding, trade)
+            elif trade.action in ("buy", "sell"):
+                _apply_trade(ledger, holding, trade, instrument.rule.allow_short)
+            # swap(FX のスワップ)は Phase 4 で扱う
+            if abs(holding.quantity) < EPSILON:
+                holding.quantity, holding.cost = 0, 0
+        if on_date is not None and (n + 1 == len(ordered) or ordered[n + 1].date != trade.date):
+            on_date(trade.date, holdings)
     ledger.holdings = {key: h for key, h in holdings.items() if h.quantity != 0}
     return ledger
 
@@ -229,6 +271,24 @@ def _apply_split(ledger: Ledger, holding: Holding, trade: Trade) -> None:
         ledger.problems.append(Problem(trade.id, "分割の時点で、この銘柄を保有していません。"))
         return
     holding.quantity *= trade.price
+
+
+def _apply_transfer(ledger: Ledger, holding: Holding, trade: Trade) -> None:
+    """入庫・出庫。保有の場所が変わるだけなので、実現損益は出さない(ロングの保有だけを扱う)。"""
+    if holding.quantity < 0:
+        ledger.problems.append(Problem(trade.id, "売り建ての保有には、入庫・出庫を使えません。"))
+        return
+    if trade.action == "transfer_in":
+        holding.cost += trade.quantity * trade.price * holding.multiplier
+        holding.quantity += trade.quantity
+        return
+    if trade.quantity > holding.quantity + EPSILON:
+        ledger.problems.append(Problem(
+            trade.id, f"保有数量({holding.quantity:,.10g})を超える出庫です。",
+        ))
+        return
+    holding.cost -= holding.cost * trade.quantity / holding.quantity
+    holding.quantity -= trade.quantity
 
 
 def _apply_trade(ledger: Ledger, holding: Holding, trade: Trade, allow_short: bool) -> None:
@@ -406,6 +466,10 @@ def parse_snapshot(saved) -> Snapshot | None:
         return None
     by_class = saved.get("by_class")
     by_class = {k: float(v) for k, v in by_class.items() if _number(v) is not None} if isinstance(by_class, dict) else {}
+    by_group = {}
+    for k, v in (saved.get("by_group") or {}).items() if isinstance(saved.get("by_group"), dict) else []:
+        if isinstance(v, list) and len(v) == 2 and all(_number(x) is not None for x in v):
+            by_group[k] = [float(v[0]), float(v[1])]
     return Snapshot(
         date=_text(saved.get("date")),
         price_date=_text(saved.get("price_date")),
@@ -414,6 +478,7 @@ def parse_snapshot(saved) -> Snapshot | None:
         unrealized=_number(saved.get("unrealized"), 0.0),
         realized_total=_number(saved.get("realized_total"), 0.0),
         by_class=by_class,
+        by_group=by_group,
     )
 
 
@@ -550,6 +615,19 @@ def _self_test() -> None:
     assert errors, errors
     # 同じ日の買い -> 売りは入力順で処理する
     assert not validate_trade(t(6, "2026-05-01", "buy", 10, 600), trades, instruments)
+
+    # 入庫(期首の保有)のあとの売り。移管(出庫 -> 別の証券会社に入庫)は実現損益を出さない
+    def u(i, date, action, qty, price, broker="楽天証券"):
+        return Trade(i, date, jp.id, broker, "特定", action, qty, price)
+
+    moves = [u(1, "2026-01-01", "transfer_in", 200, 1000), u(2, "2026-02-01", "sell", 50, 1200),
+             u(3, "2026-03-01", "transfer_out", 150, 0), u(4, "2026-03-01", "transfer_in", 150, 1000, "SBI証券")]
+    ledger = build_ledger(moves, instruments)
+    assert not ledger.problems, ledger.problems
+    assert len(ledger.realized) == 1 and ledger.realized[0].profit == 50 * 200
+    assert list(ledger.holdings) == [(jp.id, "SBI証券", "特定")]
+    assert ledger.holdings[(jp.id, "SBI証券", "特定")].average_price == 1000
+    assert validate_trade(u(5, "2026-03-02", "transfer_out", 10, 0), moves, instruments)  # もう保有がない
     print("core_asset: すべての確認に通りました。")
 
 

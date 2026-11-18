@@ -26,7 +26,6 @@
     銘柄の削除      銘柄を選んで「削除」ボタン、または Delete キー(図形は残る)
 """
 
-import json
 import math
 import os
 import sys
@@ -34,13 +33,13 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from gui_chart import ChartFrame
-from core_gather import BASE_DIR, csv_path_for, load_saved
+from core_gather import csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
+from core_watchlist import (
+    DEFAULT_GROUP, FORMAT_VERSION, WATCHLIST_PATH, parse_groups, read_watchlist, watchlist_mtime, write_watchlist,
+)
 from gui_widgets import StockSearchBox
 
-WATCHLIST_PATH = BASE_DIR / "watchlist.json"
-FORMAT_VERSION = 1
-DEFAULT_GROUP = "ウォッチリスト"  # グループが 1 つもないときに作るグループの名前
 LIST_WIDTH = 400      # 一覧の最初の幅(ピクセル)
 
 # 一覧の列(列の名前 -> (見出し、幅、文字の寄せ方))
@@ -52,46 +51,6 @@ LIST_COLUMNS = {
 }
 
 
-def read_watchlist() -> dict:
-    """watchlist.json を読み込む。ファイルがなければ空の辞書を返す。"""
-    if not WATCHLIST_PATH.exists():
-        return {}
-    with open(WATCHLIST_PATH, encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        raise ValueError("ファイルの形式が違います")
-    return data
-
-
-def write_watchlist(data: dict) -> None:
-    """watchlist.json に保存する。
-
-    書き込みの途中で止まっても元のファイルが壊れないよう、別のファイルに書いてから置き換える。
-    """
-    temporary = WATCHLIST_PATH.with_name(WATCHLIST_PATH.name + ".tmp")
-    with open(temporary, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(temporary, WATCHLIST_PATH)
-
-
-def parse_groups(saved) -> list[dict]:
-    """保存されていたグループを、{"name": 名前, "codes": [コード, ...]} の一覧に直す。
-
-    手で書き換えたファイルでも止まらないよう、形の違うものや重複は除く。
-    グループが 1 つもなければ、空のグループを 1 つ作る。
-    """
-    groups = []
-    for group in saved if isinstance(saved, list) else []:
-        if not isinstance(group, dict):
-            continue
-        name, codes = group.get("name"), group.get("codes")
-        if not isinstance(name, str) or not name.strip() or any(g["name"] == name.strip() for g in groups):
-            continue
-        codes = [c for c in codes if isinstance(c, str) and c] if isinstance(codes, list) else []
-        groups.append({"name": name.strip(), "codes": list(dict.fromkeys(codes))})
-    return groups or [{"name": DEFAULT_GROUP, "codes": []}]
-
-
 class WatchlistFrame(ttk.Frame):
     """グループと銘柄の一覧(左)と、チャート(右)をまとめた部品。"""
 
@@ -101,6 +60,9 @@ class WatchlistFrame(ttk.Frame):
         self.groups = parse_groups(data.get("groups"))
         self.group_index = 0
         self.quotes: dict[str, tuple[str, str]] = {}  # コード -> (終値、前日比) の表示
+        # 他のプログラム(fina_asset.py など)が足した銘柄を、保存のときに取り込むための記録
+        self.saved_mtime = watchlist_mtime()
+        self.saved_codes = {g["name"]: set(g["codes"]) for g in self.groups}
 
         panes = ttk.PanedWindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True)
@@ -178,6 +140,7 @@ class WatchlistFrame(ttk.Frame):
 
     def save(self) -> bool:
         """グループ・選択中の銘柄・チャートの状態を watchlist.json に保存する。保存できたら True。"""
+        self._merge_outside_changes()
         selected = self.tree.selection()
         data = {
             "version": FORMAT_VERSION,
@@ -190,7 +153,38 @@ class WatchlistFrame(ttk.Frame):
         except OSError as e:
             messagebox.showerror("fina_watchlist", f"{WATCHLIST_PATH.name} に保存できません。\n{e}", parent=self)
             return False
+        self.saved_mtime = watchlist_mtime()
+        self.saved_codes = {g["name"]: set(g["codes"]) for g in self.groups}
         return True
+
+    def _merge_outside_changes(self):
+        """前に保存したあとで、他のプログラムがファイルに足した銘柄を取り込む(上書きで消さないため)。
+
+        前回の保存のときになかった銘柄だけを足す(この画面で削除した銘柄は戻さない)。
+        """
+        if watchlist_mtime() == self.saved_mtime:
+            return
+        try:
+            outside = parse_groups(read_watchlist().get("groups"))
+        except (OSError, ValueError):
+            return
+        changed = False
+        for group in outside:
+            before = self.saved_codes.get(group["name"], set())
+            added = [c for c in group["codes"] if c not in before]
+            if not added:
+                continue
+            mine = next((g for g in self.groups if g["name"] == group["name"]), None)
+            if mine is None:
+                mine = {"name": group["name"], "codes": []}
+                self.groups.append(mine)
+            new_codes = [c for c in added if c not in mine["codes"]]
+            mine["codes"].extend(new_codes)
+            changed = changed or bool(new_codes)
+        if changed:
+            selected = self.tree.selection()
+            self._refresh_groups()
+            self._refresh_stocks(select=selected[0] if selected else None)
 
     # ---- グループ ----
 

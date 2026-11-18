@@ -17,6 +17,8 @@ core_condition.py に登録されているすべてのコンディション(COND
                     スクリーニングをやり直さずに、一覧だけが変わる
     並べ替え        一覧の見出しをクリック(もう一度クリックで逆順)。
                     「コンディション」で並べ替えると、同じコンディション・状態の銘柄がまとまる
+    ウォッチリスト  「選んだ銘柄を追加」「一覧の全銘柄を追加」ボタンで、ウォッチリスト(watchlist.json)の
+                    グループに足す(fina_watchlist.py で見られる)
     チャートの表示  一覧の銘柄をクリック、または上下キーで選ぶ。
                     当てはまったコンディションがチャートの最下段に出る(複数あれば先頭のもの)。
                     チャートの操作は gui_chart.py と同じ
@@ -40,6 +42,7 @@ from gui_chart import ChartFrame
 from core_condition import CONDITIONS
 from core_gather import csv_path_for, load_saved
 from core_stocks import load_listed
+from gui_widgets import add_to_watchlist
 
 # 市場の選択肢(表示名 -> 「市場・商品区分」の先頭の文字)。先頭が最初に選ばれる。
 # 空文字はすべての市場(ETF や REIT も含む。core_gather.py が取得しない市場は除く)
@@ -185,6 +188,13 @@ class ScreeningFrame(ttk.Frame):
         ttk.Label(parent, textvariable=self.note_var, wraplength=LIST_WIDTH - 12, justify="left").pack(
             side="bottom", fill="x", padx=6, pady=4,
         )
+        bar = ttk.Frame(parent)
+        bar.pack(side="bottom", fill="x", padx=4, pady=(4, 0))
+        ttk.Label(bar, text="ウォッチリストに").pack(side="left")
+        ttk.Button(bar, text="選んだ銘柄を追加", command=lambda: self._add_to_watchlist(False)).pack(
+            side="left", padx=(4, 0))
+        ttk.Button(bar, text="一覧の全銘柄を追加", command=lambda: self._add_to_watchlist(True)).pack(
+            side="left", padx=(4, 0))
         frame = ttk.Frame(parent)
         frame.pack(side="top", fill="both", expand=True, padx=(4, 0))
         self.tree = ttk.Treeview(frame, columns=list(LIST_COLUMNS), show="headings", selectmode="browse")
@@ -344,6 +354,13 @@ class ScreeningFrame(ttk.Frame):
         self.sort_reverse = column == self.sort_column and not self.sort_reverse
         self.sort_column = column
         self._refresh_list()
+
+    def _add_to_watchlist(self, everything: bool):
+        """選んだ銘柄(everything なら一覧の全銘柄)を、ウォッチリストのグループに足す。"""
+        codes = list(self.tree.get_children()) if everything else list(self.tree.selection())
+        message = add_to_watchlist(self, codes, "fina_screening")
+        if message:
+            self.status_var.set(message)
 
     def _on_select(self):
         selected = self.tree.selection()

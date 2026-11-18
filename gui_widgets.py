@@ -6,6 +6,9 @@ StockSearchBox
     空白で区切ると、すべての語を含む銘柄に絞り込む。
     全角・半角、大文字・小文字、ひらがな・カタカナは区別しない(検索の処理は core_stocks.py)。
 
+add_to_watchlist
+    銘柄をウォッチリスト(watchlist.json)のグループに足す。グループを尋ねる小さな画面を出し、結果を知らせる。
+
 使い方(他のプログラムから):
     index = stock_index(load_listed())
     box = StockSearchBox(parent, index, on_pick=lambda stock: print(stock.code))
@@ -14,9 +17,10 @@ StockSearchBox
 
 import tkinter as tk
 from collections.abc import Callable
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from core_stocks import MAX_CANDIDATES, Stock, search_stocks
+from core_watchlist import WATCHLIST_PATH, add_codes, group_names
 
 CANDIDATE_ROWS = 8   # 候補の欄の高さ(行数)
 DROPDOWN_WIDTH = 44  # 重ねて出す候補の欄の幅(文字数)
@@ -170,3 +174,52 @@ class StockSearchBox(ttk.Frame):
         self.candidate_list.selection_set(i)
         self.candidate_list.see(i)
         return "break"
+
+
+def ask_watchlist_group(parent, count: int) -> str | None:
+    """銘柄を足すウォッチリストのグループを尋ねる。新しい名前を入力すると、そのグループを作る。取り消しなら None。"""
+    window = tk.Toplevel(parent)
+    window.title("ウォッチリストに追加")
+    window.transient(parent.winfo_toplevel())
+    window.resizable(False, False)
+    frame = ttk.Frame(window, padding=12)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(frame, text=f"{count} 銘柄を追加するグループ(新しい名前を入力すると作ります)").pack(side="top", anchor="w")
+    names = group_names()
+    name_var = tk.StringVar(value=names[0])
+    box = ttk.Combobox(frame, textvariable=name_var, values=names, width=30)
+    box.pack(side="top", fill="x", pady=(6, 10))
+    result: list[str] = []
+
+    def accept(_event=None):
+        name = name_var.get().strip()
+        if name:
+            result.append(name)
+            window.destroy()
+
+    buttons = ttk.Frame(frame)
+    buttons.pack(side="top", anchor="e")
+    ttk.Button(buttons, text="追加", command=accept).pack(side="left")
+    ttk.Button(buttons, text="取消", command=window.destroy).pack(side="left", padx=(4, 0))
+    box.bind("<Return>", accept)
+    window.bind("<Escape>", lambda e: window.destroy())
+    box.focus_set()
+    window.grab_set()
+    window.wait_window()
+    return result[0] if result else None
+
+
+def add_to_watchlist(parent, codes: list[str], app_name: str) -> str:
+    """銘柄をウォッチリストのグループに足す(グループは尋ねる)。結果の案内を返す(取り消したときは空文字)。"""
+    if not codes:
+        return "追加する銘柄を選んでください。"
+    group = ask_watchlist_group(parent, len(codes))
+    if group is None:
+        return ""
+    try:
+        added = add_codes(group, codes)
+    except (OSError, ValueError) as e:
+        messagebox.showerror(app_name, f"{WATCHLIST_PATH.name} に保存できません。\n{e}", parent=parent)
+        return ""
+    skipped = len(set(codes)) - added
+    return f"ウォッチリストの「{group}」に {added} 銘柄を追加しました" + (f"(登録済み {skipped} 銘柄)。" if skipped else "。")

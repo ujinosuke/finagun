@@ -22,3 +22,10 @@ techtrainer_*.html
 asset.json
 asset.json.tmp
 asset.json.bak
+
+# 楽天証券の CSV のサンプル(個人の資産内容。git 管理外)
+test_asset.csv
+
+# 配当情報のキャッシュ(yfinance から取得。git 管理外)
+dividend_cache.json
+dividend_cache.json.tmp
