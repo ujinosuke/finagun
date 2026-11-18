@@ -29,3 +29,7 @@ test_asset.csv
 # 配当情報のキャッシュ(yfinance から取得。git 管理外)
 dividend_cache.json
 dividend_cache.json.tmp
+
+# 業績のキャッシュ(fina_compare.py が yfinance から取得。git 管理外)
+financials_cache.json
+financials_cache.json.tmp

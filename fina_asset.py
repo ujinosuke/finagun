@@ -68,7 +68,7 @@ from core_stocks import load_listed, normalize, stock_index
 from core_watchlist import watched_codes
 from gui_chart import ChartFrame, TradeMark  # gui_chart を読み込むと、matplotlib の日本語フォントも設定される
 from gui_treemap import TreemapCanvas, TreemapItem
-from gui_widgets import StockSearchBox, add_to_watchlist
+from gui_widgets import SortableTree, StockSearchBox, add_to_watchlist
 
 APP_NAME = "fina_asset"
 ALL = "すべて"  # 絞り込みで「すべて」を表す項目
@@ -76,7 +76,6 @@ ALL = "すべて"  # 絞り込みで「すべて」を表す項目
 # 損益の色(日本式: 利益は赤、損失は緑。設定で反転できる)
 RED = "#d32f2f"
 GREEN = "#2e7d32"
-PROBLEM_BACKGROUND = "#fff3cd"  # 集計できなかった取引の背景
 
 # グラフの色(dataviz の既定の配色。評価額は系列 1 の青、取得原価は補助の灰色)
 SERIES_BLUE = "#2a78d6"
@@ -219,70 +218,6 @@ def profit_tag(value: float | None) -> tuple[str, ...]:
     if value is None or abs(value) < 0.5:
         return ()
     return ("plus",) if value > 0 else ("minus",)
-
-
-# ---- 並べ替えのできる一覧 ----
-
-class SortableTree(ttk.Frame):
-    """見出しをクリックして並べ替えのできる一覧(ttk.Treeview とスクロールバー)。
-
-    行は (iid, 表示する値, 並べ替えに使う値, タグ) で渡す。並べ替えに使う値が None の行は、常に最後に置く。
-    """
-
-    def __init__(self, master, columns: dict, stretch: str, height: int = 10):
-        super().__init__(master)
-        self.columns = list(columns)
-        self.rows: list[tuple] = []
-        self.sort_column: str | None = None
-        self.sort_reverse = False
-        self.tree = ttk.Treeview(self, columns=self.columns, show="headings", selectmode="browse", height=height)
-        for column, (heading, width, anchor) in columns.items():
-            self.tree.heading(column, text=heading, command=lambda c=column: self._on_heading(c))
-            self.tree.column(column, width=width, anchor=anchor, stretch=column == stretch)
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.tree.pack(side="left", fill="both", expand=True)
-
-    def set_rows(self, rows: list[tuple]) -> None:
-        """行を入れ替える。選んでいた行が残っていれば、選んだままにする。"""
-        selected = self.selected()
-        self.rows = rows
-        self._render()
-        if selected is not None and self.tree.exists(selected):
-            self.tree.selection_set(selected)
-            self.tree.see(selected)
-
-    def selected(self) -> str | None:
-        selection = self.tree.selection()
-        return selection[0] if selection else None
-
-    def set_colors(self, plus: str, minus: str) -> None:
-        self.tree.tag_configure("plus", foreground=plus)
-        self.tree.tag_configure("minus", foreground=minus)
-        self.tree.tag_configure("problem", background=PROBLEM_BACKGROUND)
-
-    def _on_heading(self, column: str):
-        if self.sort_column == column:
-            self.sort_reverse = not self.sort_reverse
-        else:
-            self.sort_column, self.sort_reverse = column, False
-        self._render()
-
-    def _render(self):
-        rows = self.rows
-        if self.sort_column is not None:
-            i = self.columns.index(self.sort_column)
-            known = [r for r in rows if r[2][i] is not None]
-            unknown = [r for r in rows if r[2][i] is None]
-            rows = sorted(known, key=lambda r: r[2][i], reverse=self.sort_reverse) + unknown
-        for column in self.columns:
-            heading = self.tree.heading(column, "text").rstrip(" ▲▼")
-            mark = (" ▼" if self.sort_reverse else " ▲") if column == self.sort_column else ""
-            self.tree.heading(column, text=heading + mark)
-        self.tree.delete(*self.tree.get_children())
-        for iid, values, _keys, tags in rows:
-            self.tree.insert("", "end", iid=iid, values=values, tags=tags)
 
 
 # ---- タブ: 保有一覧 ----

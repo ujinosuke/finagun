@@ -30,7 +30,7 @@ ToreCan は、金融・投資系のプログラム集です。
 | `fina_techtrainer.py` | テクニカルトレードの訓練用プログラム |
 | `fina_screening.py` | スクリーニングプログラム。結果の銘柄をウォッチリストに追加できる |
 | `fina_watchlist.py` | 株価チャートのウォッチリスト。銘柄コードや銘柄名で検索して、グループごとに複数の銘柄を登録できる。登録内容とチャートの描画の状態は `watchlist.json` に保存し、次回の起動時に自動で読み込む |
-| `fina_compare.py` | 銘柄を比較する。株価,時価総額,EV/Rev,EV/EBITDA,PER,PSR,配当利回り を比較できる |
+| `fina_compare.py` | 銘柄を比較する。比較表(株価・時価総額・EV/Rev・EV/EBITDA・PER・PSR・配当利回り と、騰落率・52週高値安値比・移動平均乖離・RSI・ボラティリティ・ATR・β・売買代金)、株価推移の相関マトリクス、業績(売上高・営業利益・純利益)の推移の 3 つのビュー。Excel に全部を出力できる。設計は `fina_compare_design.md` |
 
 ### 裏方のプログラム
 
@@ -43,6 +43,7 @@ ToreCan は、金融・投資系のプログラム集です。
 | `gui_chart.py` | チャート表示の基本プログラム。matplotlib を使用する |
 | `gui_widgets.py` | 複数のプログラムで使い回す tkinter の部品(銘柄の検索欄 `StockSearchBox`、ウォッチリストへの追加 `add_to_watchlist` など) |
 | `gui_treemap.py` | ツリーマップ(ヒートマップ)の描画部品。四角の大きさで量を、色で上がり下がりを示す |
+| `gui_corrmatrix.py` | 相関マトリクスの描画部品。+1 に近いほど青、-1 に近いほど赤で、計算に使った日数も出す |
 
 #### 計算系(`core_`)… 画面を持たない、計算・データの処理
 
@@ -54,6 +55,7 @@ ToreCan は、金融・投資系のプログラム集です。
 | `core_asset_value.py` | 資産管理の評価(資産クラスごとの評価額・含み損益)、資産推移のスナップショットと過去の推移の計算、配分・期間騰落率 |
 | `core_asset_import.py` | 証券会社の CSV から取引を取り込む。会社・形式ごとのアダプタ(楽天証券の保有商品一覧など) |
 | `core_dividend.py` | yfinance から保有銘柄の配当情報を取得し、`dividend_cache.json` にキャッシュする |
+| `core_compare.py` | 銘柄比較の計算。テクニカル指標・相関・ベータ(保存済みの日足から)と、業績の取得(yfinance。`financials_cache.json` にキャッシュ) |
 | `core_watchlist.py` | ウォッチリストの保存ファイル(`watchlist.json`)の読み書き。他のプログラムから銘柄を足すのにも使う |
 | `core_stocks.py` | 銘柄一覧の読み込みと、銘柄コード・銘柄名での銘柄の検索(GUI を含まない部分) |
 | `core_strategies.py` | ストラテジーの基本クラスとその種類 |
