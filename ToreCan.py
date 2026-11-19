@@ -44,7 +44,7 @@ from tkinter import filedialog, messagebox, ttk
 import core_gather
 from core_asset import ASSET_PATH
 from core_asset_value import AssetOverview, asset_overview
-from core_compare import BENCHMARKS, CORRELATION_PERIODS
+from core_compare import BENCHMARK_CHOICES, CORRELATION_PERIODS
 from core_reset import NOTHING_SAVED, RESET_TARGETS, existing_files, reset
 from core_settings import (
     APP_DIR, COLOR_SCHEMES, Settings, __version__, acquire_lock, data_root, is_japan_style, load_settings,
@@ -670,7 +670,7 @@ class SettingsDialog(tk.Toplevel):
         self.original = load_settings()
         settings = self.original
         self.color_var = tk.StringVar(value=settings.color_scheme)
-        self.bench_names = {f"{code} {name}": code for code, name in BENCHMARKS.items()}
+        self.bench_names = BENCHMARK_CHOICES  # 先頭に「なし」
         self.bench_var = tk.StringVar(value=next(
             (k for k, v in self.bench_names.items() if v == settings.benchmark), next(iter(self.bench_names))))
         self.period_var = tk.StringVar(value=settings.corr_period)

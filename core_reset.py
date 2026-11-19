@@ -31,9 +31,9 @@ class ResetTarget:
 RESET_TARGETS = [
     ResetTarget("asset", "資産管理", "取引・保有・資産推移の記録・証券会社・画面の状態と、配当情報のキャッシュ",
                 ("asset.json", "asset.json.tmp", "asset.json.bak", "dividend_cache.json", "dividend_cache.json.tmp")),
-    ResetTarget("watchlist", "ウォッチリスト", "グループと登録した銘柄(チャートの図形は「チャート」で初期化)",
+    ResetTarget("watchlist", "ウォッチリスト", "グループと登録した銘柄(銘柄比較と共有。チャートの図形は「チャート」で初期化)",
                 ("watchlist.json", "watchlist.json.tmp", "watchlist.json.bak")),
-    ResetTarget("compare", "銘柄比較", "グループと登録した銘柄・表示の設定と、業績のキャッシュ(保有資産は資産管理から作るので消えない)",
+    ResetTarget("compare", "銘柄比較", "選んでいるグループ・表示の設定と、業績のキャッシュ(グループはウォッチリストと共有なので「ウォッチリスト」で初期化)",
                 ("compare.json", "compare.json.tmp", "financials_cache.json", "financials_cache.json.tmp")),
     ResetTarget("screening", "スクリーニング", "", ()),
     ResetTarget("backtest", "バックテスト", "", ()),

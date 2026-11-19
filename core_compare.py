@@ -55,6 +55,14 @@ BENCHMARKS = {
     "1343": "東証REIT指数",
     "1577": "日本株高配当70",
 }
+NO_BENCHMARK = ""  # ベンチマーク「なし」(相関に並べず、ベータも計算しない)
+# 選ぶ欄の表示 -> コード(先頭に「なし」、そのあとにベンチマークの候補)
+BENCHMARK_CHOICES = {"なし": NO_BENCHMARK, **{f"{code} {name}": code for code, name in BENCHMARKS.items()}}
+
+
+def benchmark_label(code: str) -> str:
+    """ベンチマークの表示(「1306 TOPIX」、なしなら「なし」)。"""
+    return next((label for label, c in BENCHMARK_CHOICES.items() if c == code), code)
 
 
 # ---- 株価データの読み込み ----

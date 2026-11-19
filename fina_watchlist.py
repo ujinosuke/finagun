@@ -4,10 +4,15 @@
 グループはいくつでも作れ、1 つのグループに複数の銘柄を登録できる
 (同じ銘柄を複数のグループに登録してもよい)。
 
+グループは銘柄比較(fina_compare.py)と共有する。どちらで変えても、もう片方に出る
+(同時に開いているときは、ウィンドウに戻ってきたときに読み直す)。
+「保有資産」は銘柄比較の固定のグループの名前なので、ここでは作れない。
+
 登録した内容は、ルートディレクトリの watchlist.json に保存し、次回の起動時に自動で読み込む。
 チャートの表示と図形は、どのプログラムから開いても同じになるよう、銘柄ごとに charts フォルダに保存する
 (gui_chart.py。前の版で watchlist.json に入っていた図形は、起動時に charts へ引き継ぐ)。
-保存は、登録内容を変えたとき・銘柄を選んだとき・ウィンドウを閉じるときに行う。
+登録内容は変えたときにすぐ保存する(毎回 watchlist.json を読み直してから変える。core_watchlist.py)。
+選んでいるグループと銘柄は、銘柄を選んだとき・ウィンドウを閉じるときに保存する。
 
 株価は取得しない。stock_database フォルダの保存済みデータだけを使うので、
 先に core_gather.py で株価を取得しておくこと。
@@ -41,7 +46,8 @@ from core_settings import app_title, load_settings, update_settings
 from core_gather import csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from core_watchlist import (
-    DEFAULT_GROUP, FORMAT_VERSION, WATCHLIST_PATH, parse_groups, read_watchlist, watchlist_mtime, write_watchlist,
+    WATCHLIST_PATH, add_codes, create_group, delete_group, load_groups, move_code, name_error, parse_groups,
+    read_watchlist, remove_codes, rename_group, watchlist_mtime, write_selected,
 )
 from gui_widgets import StockSearchBox
 
@@ -86,9 +92,8 @@ class WatchlistFrame(ttk.Frame):
         self.groups = parse_groups(data.get("groups"))
         self.group_index = 0
         self.quotes: dict[str, tuple[str, str]] = {}  # コード -> (終値、前日比) の表示
-        # 他のプログラム(fina_asset.py など)が足した銘柄を、保存のときに取り込むための記録
+        # 他のプログラム(銘柄比較・fina_asset.py など)が変えたかを見るための、読んだときの更新時刻
         self.saved_mtime = watchlist_mtime()
-        self.saved_codes = {g["name"]: set(g["codes"]) for g in self.groups}
 
         panes = ttk.PanedWindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True)
@@ -110,6 +115,8 @@ class WatchlistFrame(ttk.Frame):
             self.group_index = names.index(selected["group"])
         self._refresh_groups()
         self._refresh_stocks(select=selected.get("code"))
+        # 他のプログラムでグループや銘柄を変えたら、戻ってきたときに読み直す
+        master.winfo_toplevel().bind("<FocusIn>", lambda e: self._reload_if_changed(), add="+")
 
     @property
     def group(self) -> dict:
@@ -165,54 +172,59 @@ class WatchlistFrame(ttk.Frame):
     # ---- 保存 ----
 
     def save(self) -> bool:
-        """グループと選択中の銘柄を watchlist.json に保存する。保存できたら True。
+        """選んでいるグループと銘柄を watchlist.json に保存する。保存できたら True。
 
+        グループと銘柄は、変えたときに保存済み(_apply)。
         チャートの表示と図形は、ChartFrame が銘柄ごとに charts/ へ保存する。
         """
-        self._merge_outside_changes()
         selected = self.tree.selection()
-        data = {
-            "version": FORMAT_VERSION,
-            "groups": self.groups,
-            "selected": {"group": self.group["name"], "code": selected[0] if selected else None},
-        }
         try:
-            write_watchlist(data)
-        except OSError as e:
+            write_selected(self.group["name"], selected[0] if selected else None)
+        except (OSError, ValueError) as e:
             messagebox.showerror("fina_watchlist", f"{WATCHLIST_PATH.name} に保存できません。\n{e}", parent=self)
             return False
         self.saved_mtime = watchlist_mtime()
-        self.saved_codes = {g["name"]: set(g["codes"]) for g in self.groups}
         return True
 
-    def _merge_outside_changes(self):
-        """前に保存したあとで、他のプログラムがファイルに足した銘柄を取り込む(上書きで消さないため)。
+    def _apply(self, edit, *args, group: str | None = None, select: str | None = None) -> bool:
+        """グループや銘柄を core_watchlist の関数 edit で変えて保存し、表示し直す。できたら True。
 
-        前回の保存のときになかった銘柄だけを足す(この画面で削除した銘柄は戻さない)。
+        edit はファイルを読み直してから変えるので、他のプログラムでの変更は消えない。
+        group: 変えたあとに選ぶグループ(なければ今のグループ)。select: 選ぶ銘柄。
         """
-        if watchlist_mtime() == self.saved_mtime:
+        try:
+            result = edit(*args)
+            groups = result if isinstance(result, list) else load_groups()  # add_codes は足した数を返す
+        except (OSError, ValueError) as e:
+            messagebox.showerror("fina_watchlist", f"{WATCHLIST_PATH.name} に保存できません。\n{e}", parent=self)
+            return False
+        self.saved_mtime = watchlist_mtime()
+        self._set_groups(groups, group or self.group["name"], select)
+        return True
+
+    def _set_groups(self, groups: list[dict], name: str, select: str | None) -> None:
+        """グループの一覧を入れ替え、name のグループ(なければ同じ位置のグループ)と select の銘柄を選ぶ。"""
+        index = self.group_index
+        self.groups = groups
+        names = [g["name"] for g in groups]
+        self.group_index = names.index(name) if name in names else min(index, len(groups) - 1)
+        self._refresh_groups()
+        self._refresh_stocks(select=select)
+
+    def _reload_if_changed(self) -> None:
+        """他のプログラムが watchlist.json を変えていたら、読み直して表示し直す。"""
+        mtime = watchlist_mtime()
+        if mtime == self.saved_mtime:
             return
         try:
-            outside = parse_groups(read_watchlist().get("groups"))
+            groups = load_groups()
         except (OSError, ValueError):
+            return  # 読めないときは、今の表示のまま(次に戻ってきたときにもう一度試す)
+        self.saved_mtime = mtime
+        if groups == self.groups:
             return
-        changed = False
-        for group in outside:
-            before = self.saved_codes.get(group["name"], set())
-            added = [c for c in group["codes"] if c not in before]
-            if not added:
-                continue
-            mine = next((g for g in self.groups if g["name"] == group["name"]), None)
-            if mine is None:
-                mine = {"name": group["name"], "codes": []}
-                self.groups.append(mine)
-            new_codes = [c for c in added if c not in mine["codes"]]
-            mine["codes"].extend(new_codes)
-            changed = changed or bool(new_codes)
-        if changed:
-            selected = self.tree.selection()
-            self._refresh_groups()
-            self._refresh_stocks(select=selected[0] if selected else None)
+        selected = self.tree.selection()
+        self._set_groups(groups, self.group["name"], selected[0] if selected else None)
 
     # ---- グループ ----
 
@@ -232,30 +244,25 @@ class WatchlistFrame(ttk.Frame):
         name = (name or "").strip()
         if not name or name == initial:
             return None
-        if any(group["name"] == name for group in self.groups):
-            messagebox.showerror("fina_watchlist", f"「{name}」という名前のグループは、すでにあります。", parent=self)
+        error = name_error(name, self.groups)
+        if error:
+            messagebox.showerror("fina_watchlist", error, parent=self)
             return None
         return name
 
     def new_group(self) -> None:
         """グループを作り、そのグループを選ぶ。"""
         name = self._ask_group_name("グループの新規作成")
-        if name is None:
-            return
-        self.groups.append({"name": name, "codes": []})
-        self.group_index = len(self.groups) - 1
-        self._refresh_groups()
-        self._refresh_stocks()
-        self.save()
+        if name is not None and self._apply(create_group, name, group=name):
+            self.save()
 
     def rename_group(self) -> None:
         """選択中のグループの名前を変える。"""
         name = self._ask_group_name("グループの名前変更", self.group["name"])
-        if name is None:
-            return
-        self.group["name"] = name
-        self._refresh_groups()
-        self.save()
+        selected = self.tree.selection()
+        if name is not None and self._apply(rename_group, self.group["name"], name, group=name,
+                                            select=selected[0] if selected else None):
+            self.save()
 
     def delete_group(self) -> None:
         """選択中のグループを消す。最後の 1 つを消したときは、空のグループを作り直す。"""
@@ -266,13 +273,8 @@ class WatchlistFrame(ttk.Frame):
             parent=self,
         ):
             return
-        del self.groups[self.group_index]
-        if not self.groups:
-            self.groups.append({"name": DEFAULT_GROUP, "codes": []})
-        self.group_index = min(self.group_index, len(self.groups) - 1)
-        self._refresh_groups()
-        self._refresh_stocks()
-        self.save()
+        if self._apply(delete_group, group["name"]):
+            self.save()
 
     # ---- 銘柄の登録 ----
 
@@ -292,8 +294,8 @@ class WatchlistFrame(ttk.Frame):
     def add_stock(self, code: str) -> None:
         """銘柄を選択中のグループに登録して選ぶ。登録済みなら選ぶだけ。"""
         added = code not in self.group["codes"]
-        if added:
-            self.group["codes"].append(code)
+        if added and not self._apply(add_codes, self.group["name"], [code], select=code):
+            return
         self._refresh_stocks(select=code)
         if not added:
             self.status_var.set(f"{code} {self._stock_name(code)} は、このグループに登録済みです。")
@@ -306,9 +308,10 @@ class WatchlistFrame(ttk.Frame):
             return
         codes = self.group["codes"]
         i = codes.index(selected[0])
-        del codes[i]
-        self._refresh_stocks(select=codes[min(i, len(codes) - 1)] if codes else None)
-        self.save()
+        rest = [c for c in codes if c != selected[0]]
+        neighbor = rest[min(i, len(rest) - 1)] if rest else None
+        if self._apply(remove_codes, self.group["name"], [selected[0]], select=neighbor):
+            self.save()
 
     def move_stock(self, step: int) -> None:
         """選択中の銘柄を、一覧の中で上(step=-1)または下(step=1)に動かす。"""
@@ -316,13 +319,10 @@ class WatchlistFrame(ttk.Frame):
         if not selected:
             return
         codes = self.group["codes"]
-        i = codes.index(selected[0])
-        j = i + step
-        if not 0 <= j < len(codes):
+        if not 0 <= codes.index(selected[0]) + step < len(codes):
             return
-        codes[i], codes[j] = codes[j], codes[i]
-        self._refresh_stocks(select=selected[0])
-        self.save()
+        if self._apply(move_code, self.group["name"], selected[0], step, select=selected[0]):
+            self.save()
 
     # ---- 銘柄の一覧 ----
 

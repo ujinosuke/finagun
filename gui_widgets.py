@@ -23,7 +23,7 @@ from collections.abc import Callable
 from tkinter import messagebox, ttk
 
 from core_stocks import MAX_CANDIDATES, Stock, search_stocks
-from core_watchlist import WATCHLIST_PATH, add_codes, group_names
+from core_watchlist import RESERVED_NAMES, WATCHLIST_PATH, add_codes, group_names, name_error
 
 CANDIDATE_ROWS = 8   # 候補の欄の高さ(行数)
 DROPDOWN_WIDTH = 44  # 重ねて出す候補の欄の幅(文字数)
@@ -197,6 +197,9 @@ def ask_watchlist_group(parent, count: int) -> str | None:
 
     def accept(_event=None):
         name = name_var.get().strip()
+        if name in RESERVED_NAMES:  # 銘柄比較の固定のグループの名前では作れない
+            messagebox.showerror("ウォッチリストに追加", name_error(name, []), parent=window)
+            return
         if name:
             result.append(name)
             window.destroy()

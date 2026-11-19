@@ -26,7 +26,7 @@ import sys
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
-__version__ = "0.1.005"
+__version__ = "0.1.006"
 
 APP_DIR = Path(__file__).resolve().parent  # プログラムのフォルダ(保存ファイルの置き場所)
 SETTINGS_PATH = APP_DIR / "settings.json"
@@ -41,7 +41,7 @@ TEXT_GREEN = "#2e7d32"
 TEXT_RED = "#d32f2f"
 
 # 選べる値(fina_compare と同じ。ここで持つのは、このモジュールが他を import しないため)
-BENCHMARK_CODES = ("1306", "1321", "1591", "2516", "1343", "1577")
+BENCHMARK_CODES = ("1306", "1321", "1591", "2516", "1343", "1577", "")  # "" は「なし」
 CORRELATION_PERIOD_NAMES = ("3か月", "6か月", "1年", "全期間")
 
 
@@ -54,7 +54,7 @@ def app_title(name: str) -> str:
 class Settings:
     """全体設定。"""
     color_scheme: str = "western"   # "western"(上昇・利益が緑) / "japan"(上昇・利益が赤)
-    benchmark: str = "1306"         # 銘柄比較の相関・ベータのベンチマーク
+    benchmark: str = "1306"         # 銘柄比較の相関・ベータのベンチマーク("" は「なし」)
     corr_period: str = "1年"        # 銘柄比較の相関の期間
     data_dir: str = ""              # listed_stocks・stock_database を入れたフォルダ。空ならプログラムのフォルダ
     # チャートの既定の表示(足・出来高・オシレーター・コンディション・十字線)。
