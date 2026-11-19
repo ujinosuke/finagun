@@ -9,7 +9,7 @@
     3. compute() で、足と同じ行・lines と同じ列の DataFrame を返す
 
 インジケーターは、渡された足(日足・週足・月足)の 1 本を 1 期間として計算する。
-たとえば週足に SMA20 を使えば 20 週の移動平均になる。
+たとえば週足に SMA25 を使えば 25 週の移動平均になる。
 """
 
 from abc import ABC, abstractmethod
@@ -49,18 +49,20 @@ def sma(series: pd.Series, period: int) -> pd.Series:
     return series.rolling(period, min_periods=period).mean()
 
 
-class SMAEssential3(Indicator):
-    """基本の 3 本の単純移動平均線(20 / 75 / 200)。終値で計算する。
+class SMAEssential4(Indicator):
+    """基本の 4 本の単純移動平均線(5 / 25 / 75 / 200)。終値で計算する。
 
-    20 : 緑の細い線
+    5  : 青の細い線
+    25 : 緑の細い線
     75 : 紫の中くらいの線
     200: 赤の太い線
     """
 
-    name = "SMA 20/75/200"
-    PERIODS = (20, 75, 200)
+    name = "SMA 5/25/75/200"
+    PERIODS = (5, 25, 75, 200)
     lines = {
-        "SMA20": LineStyle("SMA20", "#43a047", 0.9),
+        "SMA5": LineStyle("SMA5", "#1e88e5", 0.8),
+        "SMA25": LineStyle("SMA25", "#43a047", 0.9),
         "SMA75": LineStyle("SMA75", "#8e24aa", 1.5),
         "SMA200": LineStyle("SMA200", "#e53935", 2.4),
     }

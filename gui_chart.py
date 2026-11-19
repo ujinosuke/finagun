@@ -2,7 +2,7 @@
 
 stock_database フォルダの日足データ(core_gather.py で取得)を読み込み、
 ローソク足を表示する。陽線は緑、陰線は赤で描く。
-移動平均線(SMA 20/75/200、core_indicators.SMAEssential3)を常に重ねて表示する。
+移動平均線(SMA 5/25/75/200、core_indicators.SMAEssential4)を常に重ねて表示する。
 下段には出来高、オシレーター(core_oscillators.py)、コンディション(core_condition.py)を表示でき、
 それぞれ表示・非表示を選べる。
 
@@ -70,7 +70,7 @@ from core_chartstore import chart_mtime, delete_chart, load_chart, save_chart
 from core_settings import app_title, load_settings, market_colors, update_settings
 from core_stocks import load_listed, load_stock_names, stock_index
 from gui_widgets import StockSearchBox
-from core_indicators import Indicator, SMAEssential3
+from core_indicators import Indicator, SMAEssential4
 from core_oscillators import OSCILLATORS
 from core_condition import CONDITIONS
 
@@ -122,7 +122,7 @@ PANE_HEIGHTS = {"price": 4, "volume": 1, "oscillator": 1.3, "condition": 0.5}
 
 def base_indicators() -> list[Indicator]:
     """常に表示するインジケーター。ユーザーは非表示にできない。"""
-    return [SMAEssential3()]
+    return [SMAEssential4()]
 
 
 def resample(daily: pd.DataFrame, rule: str | None) -> pd.DataFrame:
