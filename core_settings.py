@@ -57,14 +57,14 @@ class Settings:
     benchmark: str = "1306"         # 銘柄比較の相関・ベータのベンチマーク("" は「なし」)
     corr_period: str = "1年"        # 銘柄比較の相関の期間
     data_dir: str = ""              # listed_stocks・stock_database を入れたフォルダ。空ならプログラムのフォルダ
-    # チャートの既定の表示(足・出来高・オシレーター・コンディション・十字線)。
+    # チャートの既定の表示(足・ボリンジャーバンド・出来高・オシレーター・コンディション・十字線)。
     # 銘柄ごとのファイル(charts/)がない銘柄はこの表示で開く。値を確かめるのは gui_chart.chart_defaults
     chart_defaults: dict = field(default_factory=dict)
     draw_color: str = ""            # チャートで図形を描く色(全銘柄で 1 つ)。空なら gui_chart の最初の色
 
 
 CHART_DEFAULT_KEYS = {  # chart_defaults の項目 -> 値の型
-    "timeframe": str, "volume": bool, "oscillator_on": bool, "oscillator": str,
+    "timeframe": str, "bollinger": bool, "volume": bool, "oscillator_on": bool, "oscillator": str,
     "condition_on": bool, "condition": str, "crosshair": bool,
 }
 

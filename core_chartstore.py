@@ -7,7 +7,7 @@
 
 ファイルの形:
     {"version": 1, "code": "7203",
-     "display": {"timeframe": "週足", "volume": true, "oscillator_on": true, "oscillator": "RSI",
+     "display": {"timeframe": "週足", "bollinger": false, "volume": true, "oscillator_on": true, "oscillator": "RSI",
                  "condition_on": false, "condition": "...", "crosshair": false},
      "drawings": [{"type": "trend", "color": "#2962ff", "points": [["2026-03-02", 3120.0], ...]}],
      "updated": "2026-11-18T22:10:00"}

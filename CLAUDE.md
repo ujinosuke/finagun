@@ -46,3 +46,4 @@
 - 例外: `core_condition.py` の RSI ダイバージェンス(`RSIDivergence`)は、TradingView の「RSI Divergence Indicator」に合わせて、株価の山では高値、谷では安値を比べる(RSI 自体は終値で計算する)。
 - 例外: `core_compare.py` の 52 週高値・安値は、一般的な定義に合わせて日中の高値(`High`)・安値(`Low`)を使う(2026-11-18 本人決定)。
 - 例外: `core_compare.py` の ATR は、定義どおり高値・安値・終値を使う(2026-11-18 本人決定)。
+- 例外: `core_indicators.py` の `atr()` と、`core_oscillators.py` の `ATR` も、定義どおり高値・安値・終値を使う(2026-11-20 本人の依頼で追加)。

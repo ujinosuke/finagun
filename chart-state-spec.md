@@ -32,6 +32,7 @@
   "code": "7203",
   "display": {
     "timeframe": "週足",
+    "bollinger": false,
     "volume": true,
     "oscillator_on": true,
     "oscillator": "RSI",

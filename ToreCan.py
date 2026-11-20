@@ -743,6 +743,7 @@ class SettingsDialog(tk.Toplevel):
         defaults = chart_defaults()
         self.chart_vars = {
             "timeframe": tk.StringVar(value=defaults["timeframe"]),
+            "bollinger": tk.BooleanVar(value=defaults["bollinger"]),
             "volume": tk.BooleanVar(value=defaults["volume"]),
             "oscillator_on": tk.BooleanVar(value=defaults["oscillator_on"]),
             "oscillator": tk.StringVar(value=defaults["oscillator"]),
@@ -758,6 +759,7 @@ class SettingsDialog(tk.Toplevel):
         line.pack(side="top", anchor="w")
         for name in TIMEFRAMES:
             ttk.Radiobutton(line, text=name, value=name, variable=v["timeframe"]).pack(side="left", padx=(0, PAD))
+        ttk.Checkbutton(line, text="ボリンジャー", variable=v["bollinger"]).pack(side="left", padx=(PAD, 0))
         ttk.Checkbutton(line, text="出来高", variable=v["volume"]).pack(side="left", padx=(PAD, PAD))
         ttk.Checkbutton(line, text="十字線", variable=v["crosshair"]).pack(side="left")
         line = ttk.Frame(box)

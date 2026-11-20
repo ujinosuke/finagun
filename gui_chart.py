@@ -3,8 +3,9 @@
 stock_database フォルダの日足データ(core_gather.py で取得)を読み込み、
 ローソク足を表示する。陽線は緑、陰線は赤で描く。
 移動平均線(SMA 5/25/75/200、core_indicators.SMAEssential4)を常に重ねて表示する。
-下段には出来高、オシレーター(core_oscillators.py)、コンディション(core_condition.py)を表示でき、
-それぞれ表示・非表示を選べる。
+ボリンジャーバンド(core_indicators.BollingerBands)は、表示・非表示を選んで重ねられる。
+下段には出来高(出来高の 20 本移動平均つき)、オシレーター(core_oscillators.py の RSI・MACD・ATR)、
+コンディション(core_condition.py)を表示でき、それぞれ表示・非表示を選べる。
 
 使い方:
     python gui_chart.py 7203    # 7203.T のチャートを表示
@@ -16,6 +17,7 @@ stock_database フォルダの日足データ(core_gather.py で取得)を読み
                     全角・半角、大文字・小文字、ひらがな・カタカナは区別しない。
                     候補にない銘柄(上場廃止など)も、コードを入力して Enter で表示できる
     足の変更        日足 / 週足 / 月足 ボタン
+    ボリンジャー    「ボリンジャー」のチェックで、ボリンジャーバンド(20 本・±2σ)を重ねる
     下段の表示      「出来高」「オシレーター」「コンディション」のチェックで表示・非表示。
                     オシレーターとコンディションは、右の欄で種類を選ぶ
     スクロール      チャートの何もない所を左右にドラッグ、または下のスクロールバー
@@ -70,7 +72,7 @@ from core_chartstore import chart_mtime, delete_chart, load_chart, save_chart
 from core_settings import app_title, load_settings, market_colors, update_settings
 from core_stocks import load_listed, load_stock_names, stock_index
 from gui_widgets import StockSearchBox
-from core_indicators import Indicator, SMAEssential4
+from core_indicators import BollingerBands, Indicator, SMAEssential4, VolumeMA
 from core_oscillators import OSCILLATORS
 from core_condition import CONDITIONS
 
@@ -110,6 +112,7 @@ BODY_HALF_WIDTH = 0.35
 PICK_PIXELS = 6      # 図形をクリックで選ぶときの許容距離
 LINE_WIDTH = 1.4
 INDICATOR_ZORDER = 1.5  # ローソク足(1)より上、図形(2)より下
+FILL_ZORDER = 0.8       # インジケーターの塗り(ボリンジャーバンドの間など)。ローソク足より下
 LINK_ZORDER = 1.8       # コンディションの根拠の線。インジケーターより上、図形より下
 CROSSHAIR_COLOR = "#787b86"
 TRADE_ZORDER = 1.9         # 売買ポイント。コンディションの根拠の線より上、図形より下
@@ -123,6 +126,11 @@ PANE_HEIGHTS = {"price": 4, "volume": 1, "oscillator": 1.3, "condition": 0.5}
 def base_indicators() -> list[Indicator]:
     """常に表示するインジケーター。ユーザーは非表示にできない。"""
     return [SMAEssential4()]
+
+
+def price_indicators(bollinger: bool) -> list[Indicator]:
+    """価格チャートに重ねるインジケーター。常に表示するものと、選んで表示するもの(ボリンジャーバンド)。"""
+    return base_indicators() + ([BollingerBands()] if bollinger else [])
 
 
 def resample(daily: pd.DataFrame, rule: str | None) -> pd.DataFrame:
@@ -180,12 +188,12 @@ def _parse_drawing(saved) -> dict | None:
 # ---- 表示の設定(銘柄ごとに保存する。ファイルのない銘柄は既定) ----
 
 DISPLAY_KEYS = {  # 表示の設定の項目 -> 値の型
-    "timeframe": str, "volume": bool, "oscillator_on": bool, "oscillator": str,
+    "timeframe": str, "bollinger": bool, "volume": bool, "oscillator_on": bool, "oscillator": str,
     "condition_on": bool, "condition": str, "crosshair": bool,
 }
 # ToreCan の設定にチャートの既定がないときの表示(前の版の初期値と同じ)
 BUILTIN_DISPLAY = {
-    "timeframe": "日足", "volume": True, "oscillator_on": True, "oscillator": next(iter(OSCILLATORS)),
+    "timeframe": "日足", "bollinger": False, "volume": True, "oscillator_on": True, "oscillator": next(iter(OSCILLATORS)),
     "condition_on": True, "condition": next(iter(CONDITIONS)), "crosshair": False,
 }
 
@@ -253,8 +261,8 @@ class ChartFrame(ttk.Frame):
         self.selected = None  # 選択中の図形
         self.drag = None      # 図形の移動中の情報
         self.pan_start = None
-        self.indicators = base_indicators()
         self.indicator_values = None   # 表示中の足で計算したインジケーターの値(全インジケーターの列)
+        self.volume_values = None      # 表示中の足の出来高の移動平均と急増率(出来高の段を出しているとき)
         self.oscillator_values = None  # 表示中のオシレーターの値
         self.condition_values = None   # 表示中のコンディションの判定結果
         self.ax = self.ax_vol = self.ax_osc = self.ax_cond = None
@@ -302,6 +310,12 @@ class ChartFrame(ttk.Frame):
                 bar, text=label, value=label, variable=self.timeframe_var,
                 style="Toolbutton", command=lambda: self._on_display_changed("timeframe"),
             ).pack(side="left")
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+
+        # 価格チャートに重ねるもの
+        self.bollinger_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bar, text="ボリンジャー", variable=self.bollinger_var,
+                        command=lambda: self._on_display_changed("bollinger")).pack(side="left")
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
 
         # 下段の表示・非表示
@@ -533,11 +547,21 @@ class ChartFrame(ttk.Frame):
             # 始値と終値が同じ足も線として見えるよう、枠線を付ける
             self.ax.add_collection(PolyCollection(bodies, facecolors=colors, edgecolors=colors, linewidths=0.6)),
         ]
+        self.volume_values = None
         if self.ax_vol:
             volumes = [((i - w, 0), (i - w, v), (i + w, v), (i + w, 0)) for i, v in enumerate(b["Volume"])]
             self.candle_artists.append(self.ax_vol.add_collection(
                 PolyCollection(volumes, facecolors=colors, edgecolors=colors, linewidths=0.6)
             ))
+            # 出来高の移動平均を線で重ねる。急増率はマウス位置の情報に出す
+            volume_ma = VolumeMA()
+            result = volume_ma.compute(b)
+            self.volume_values = result.assign(VOL_Surge=volume_ma.surge(b))
+            for column, style in volume_ma.lines.items():
+                (line,) = self.ax_vol.plot(range(len(b)), result[column], color=style.color,
+                                           linewidth=style.width, label=style.label, zorder=INDICATOR_ZORDER)
+                self.candle_artists.append(line)
+            self.candle_artists.append(self.ax_vol.legend(loc="upper left", frameon=False, fontsize=8))
 
     def _draw_indicators(self):
         """インジケーターを計算し、価格チャートに線で重ねる。"""
@@ -546,19 +570,27 @@ class ChartFrame(ttk.Frame):
         self.indicator_artists = []
         x = range(len(self.bars))
         values = []
-        for indicator in self.indicators:
+        handles = []  # 凡例に出す線
+        for indicator in price_indicators(self.bollinger_var.get()):
             result = indicator.compute(self.bars)
             values.append(result)
+            for fill in indicator.fills:
+                # 線の間の塗り。ローソク足より下に置き、足を隠さない
+                self.indicator_artists.append(self.ax.fill_between(
+                    x, result[fill.upper], result[fill.lower], color=to_rgba(fill.color, fill.alpha),
+                    linewidth=0, zorder=FILL_ZORDER,
+                ))
             for column, style in indicator.lines.items():
                 (line,) = self.ax.plot(
                     x, result[column], color=style.color, linewidth=style.width,
                     label=style.label, zorder=INDICATOR_ZORDER,
                 )
-                self.indicator_artists.append(line)
+                handles.append(line)
+        self.indicator_artists += handles
         self.indicator_values = pd.concat(values, axis=1) if values else None
-        if self.indicator_artists:
+        if handles:
             legend = self.ax.legend(
-                handles=self.indicator_artists, loc="upper left", frameon=False, fontsize=9, ncols=len(self.indicator_artists),
+                handles=handles, loc="upper left", frameon=False, fontsize=9, ncols=len(handles),
             )
             self.indicator_artists.append(legend)
 
@@ -581,16 +613,29 @@ class ChartFrame(ttk.Frame):
         for level in levels:
             add(ax.axhline(level, color="#9e9e9e", linewidth=0.8, linestyle="--"))
         handles = []
+        x = range(len(self.bars))
         for column, style in oscillator.lines.items():
-            (line,) = ax.plot(range(len(self.bars)), result[column], color=style.color, linewidth=style.width, label=style.label)
+            if column in oscillator.histograms:
+                # 棒で描く列(MACD のヒストグラムなど)。0 より上は上昇の色、下は下落の色
+                w = BODY_HALF_WIDTH
+                values = result[column].fillna(0)
+                bar_colors = [to_rgba(UP_COLOR if v >= 0 else DOWN_COLOR, 0.6) for v in values]
+                polys = [((i - w, 0), (i - w, v), (i + w, v), (i + w, 0)) for i, v in enumerate(values)]
+                add(ax.add_collection(PolyCollection(polys, facecolors=bar_colors, edgecolors=bar_colors,
+                                                     linewidths=0.6)))
+                continue
+            (line,) = ax.plot(x, result[column], color=style.color, linewidth=style.width, label=style.label)
             handles.append(line)
             add(line)
         add(ax.legend(handles=handles, loc="upper left", frameon=False, fontsize=9, ncols=len(handles)))
 
         if oscillator.ylim:
             ax.set_ylim(*oscillator.ylim)
-        if levels:
-            ax.set_yticks(levels)
+            if levels:
+                ax.set_yticks(levels)
+        else:
+            # 縦軸が決まっていないオシレーター(MACD・ATR)は、目盛りを自動で 3 つほど出す
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
 
     def _draw_condition(self):
         """選択中のコンディションを最下段に描く。状態ごとに 1 行を使い、成り立つ足に色を付ける。"""
@@ -900,10 +945,16 @@ class ChartFrame(ttk.Frame):
             for column, value in self.indicator_values.iloc[i].items():
                 if not pd.isna(value):
                     text += f"   {column} {value:,.1f}"
+        if self.volume_values is not None:
+            row = self.volume_values.iloc[i]
+            if not pd.isna(row["VOL_MA20"]):
+                text += f"   出来高MA20 {int(row['VOL_MA20']):,}"
+            if not pd.isna(row["VOL_Surge"]):
+                text += f"   急増率 {row['VOL_Surge']:.2f}倍"
         if self.oscillator_values is not None:
             for column, value in self.oscillator_values.iloc[i].items():
                 if not pd.isna(value):
-                    text += f"   {column} {value:,.1f}"
+                    text += f"   {column} {value:,.2f}" if abs(value) < 100 else f"   {column} {value:,.1f}"
         if self.condition_values is not None:
             row = self.condition_values.iloc[i]
             condition = CONDITIONS[self.condition_var.get()]
@@ -1068,7 +1119,8 @@ class ChartFrame(ttk.Frame):
     def _display_now(self) -> dict:
         """今の表示の設定。"""
         return {
-            "timeframe": self.timeframe_var.get(), "volume": self.volume_var.get(),
+            "timeframe": self.timeframe_var.get(), "bollinger": self.bollinger_var.get(),
+            "volume": self.volume_var.get(),
             "oscillator_on": self.oscillator_on_var.get(), "oscillator": self.oscillator_var.get(),
             "condition_on": self.condition_on_var.get(), "condition": self.condition_var.get(),
             "crosshair": self.crosshair_var.get(),
@@ -1077,6 +1129,7 @@ class ChartFrame(ttk.Frame):
     def _apply_display(self, display: dict) -> None:
         """表示の設定を画面の欄に入れる(描き直しは呼び出し側で行う)。"""
         self.timeframe_var.set(display["timeframe"])
+        self.bollinger_var.set(display["bollinger"])
         self.volume_var.set(display["volume"])
         self.oscillator_on_var.set(display["oscillator_on"])
         self.oscillator_var.set(display["oscillator"])
@@ -1167,6 +1220,7 @@ class ChartFrame(ttk.Frame):
         """表示の設定と全銘柄の図形を、JSON に保存できる形で返す。他のプログラムから使う。"""
         return {
             "timeframe": self.timeframe_var.get(),
+            "bollinger": self.bollinger_var.get(),
             "volume": self.volume_var.get(),
             "oscillator_on": self.oscillator_on_var.get(),
             "oscillator": self.oscillator_var.get(),
@@ -1194,6 +1248,7 @@ class ChartFrame(ttk.Frame):
             if isinstance(state.get(key), str) and state[key] in valid:
                 var.set(state[key])
         switches = {
+            "bollinger": self.bollinger_var,
             "volume": self.volume_var,
             "oscillator_on": self.oscillator_on_var,
             "condition_on": self.condition_on_var,

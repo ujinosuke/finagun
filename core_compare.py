@@ -31,8 +31,8 @@ import pandas as pd
 import yfinance as yf
 
 from core_gather import BASE_DIR
-from core_indicators import sma
-from core_oscillators import RSI, rma
+from core_indicators import atr as core_atr, sma
+from core_oscillators import RSI
 
 TRADING_DAYS = 250   # 1 年の営業日数(年率換算・1 年の期間に使う)
 MIN_DAYS = 20        # 相関・ベータの計算に最低限要るリターンの日数
@@ -174,12 +174,7 @@ def technical_metrics(daily: pd.DataFrame | None, bench_close: pd.Series | None 
     # ATR(14)(例外: 高値・安値・終値を使う)。TradingView の ta.atr と同じ RMA
     atr = None
     if {"High", "Low"} <= set(daily.columns):
-        previous = close.shift(1)
-        true_range = pd.concat([
-            daily["High"] - daily["Low"], (daily["High"] - previous).abs(), (daily["Low"] - previous).abs(),
-        ], axis=1).max(axis=1, skipna=False)
-        true_range.iloc[0] = daily["High"].iloc[0] - daily["Low"].iloc[0]
-        atr = _last(rma(true_range, 14))
+        atr = _last(core_atr(daily, 14))
     extras["atr14"] = atr
     values["atr14"] = atr / price * 100 if atr is not None and price > 0 else None
 

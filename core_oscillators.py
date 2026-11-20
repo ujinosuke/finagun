@@ -6,13 +6,14 @@ core_indicators.Indicator を継承し、計算(compute)と線の見た目(lines
 
 新しいオシレーターの作り方:
     1. Oscillator を継承し、name・lines・ylim・levels を決めて compute() を書く
+       (棒で描く列は histograms に入れる)
     2. 下の OSCILLATORS に登録する(gui_chart.py の選択肢に出る)
 """
 
 import numpy as np
 import pandas as pd
 
-from core_indicators import Indicator, LineStyle, sma
+from core_indicators import Indicator, LineStyle, atr, macd, rma, sma  # rma は他のファイルもここから使う
 
 
 class Oscillator(Indicator):
@@ -22,25 +23,8 @@ class Oscillator(Indicator):
     ylim: tuple[float, float] | None = None
     # 基準線(例: RSI の 30 と 70)。2 本あれば、その間を薄く塗る
     levels: tuple[float, ...] = ()
-
-
-def rma(series: pd.Series, period: int) -> pd.Series:
-    """ワイルダーの移動平均(RMA)。RSI などで使う。
-
-    最初の値は先頭 period 本の単純平均で、以降は
-    「前回の値 × (period - 1) / period + 今回の値 / period」で更新する。
-    TradingView の ta.rma と同じ計算。
-    """
-    values = series.to_numpy(dtype=float)
-    out = np.full(len(values), np.nan)
-    valid = np.flatnonzero(~np.isnan(values))
-    if valid.size:
-        seed = valid[0] + period - 1
-        if seed < len(values):
-            out[seed] = values[valid[0]: seed + 1].mean()
-            for i in range(seed + 1, len(values)):
-                out[i] = (out[i - 1] * (period - 1) + values[i]) / period
-    return pd.Series(out, index=series.index)
+    # 線ではなく棒で描く列(例: MACD のヒストグラム)。0 より上は上昇の色、下は下落の色
+    histograms: tuple[str, ...] = ()
 
 
 class RSI(Oscillator):
@@ -72,7 +56,46 @@ class RSI(Oscillator):
         return pd.DataFrame({"RSI": rsi, "RSI_SMA14": sma(rsi, self.MA_PERIOD)})
 
 
+class MACD(Oscillator):
+    """MACD(12 / 26 / 9)。終値で計算する。TradingView の ta.macd と同じ。
+
+    MACD(短期 EMA - 長期 EMA)が Signal を上に抜ければ上昇の勢い、下に抜ければ下降の勢いの目安。
+    ヒストグラム(MACD - Signal)は棒で描く。線の色は TradingView の初期設定に合わせる。
+    """
+
+    name = "MACD"
+    FAST, SLOW, SIGNAL = 12, 26, 9
+    lines = {
+        "MACD_Hist": LineStyle("Hist", "#9e9e9e", 1.0),
+        "MACD": LineStyle("MACD 12/26", "#2962ff", 1.0),
+        "MACD_Signal": LineStyle("Signal 9", "#ff6d00", 1.0),
+    }
+    levels = (0,)
+    histograms = ("MACD_Hist",)
+
+    def compute(self, bars: pd.DataFrame) -> pd.DataFrame:
+        result = macd(bars["Close"], self.FAST, self.SLOW, self.SIGNAL)
+        return pd.DataFrame({"MACD_Hist": result["Hist"], "MACD": result["MACD"], "MACD_Signal": result["Signal"]},
+                            index=bars.index)
+
+
+class ATR(Oscillator):
+    """ATR(14 本)。値幅の大きさ。スイングの損切り幅の目安(例: 買値 - 2 × ATR)。
+
+    例外: 定義どおり高値・安値・終値を使う。TradingView の ta.atr と同じ。
+    """
+
+    name = "ATR"
+    PERIOD = 14
+    lines = {"ATR14": LineStyle("ATR 14", "#d81b60", 1.0)}
+
+    def compute(self, bars: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"ATR14": atr(bars, self.PERIOD)}, index=bars.index)
+
+
 # gui_chart.py で選べるオシレーター(表示名 -> クラス)。先頭が最初に選ばれる
 OSCILLATORS: dict[str, type[Oscillator]] = {
     "RSI": RSI,
+    "MACD": MACD,
+    "ATR": ATR,
 }
