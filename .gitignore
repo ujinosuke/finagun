@@ -15,6 +15,10 @@ compare.json
 compare.json.tmp
 # 比較表の Excel 出力(既定のファイル名)
 compare_*.xlsx
+
+# スクリーニングで保存した条件セット(個人ごと。git 管理外)
+screening_presets.json
+screening_presets.json.tmp
 # テクニカルトレード訓練のレポート(既定のファイル名)
 techtrainer_*.html
 
@@ -49,3 +53,6 @@ backup/
 
 # チャートの表示と図形(銘柄ごと。git 管理外)
 charts/
+
+# PICO との会話
+pico_*

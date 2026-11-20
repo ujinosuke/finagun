@@ -180,8 +180,8 @@ def summarize(code: str, trades: list[Trade]) -> Summary:
 
 @cache
 def strategy_instance(name: str) -> Strategy:
-    """名前からストラテジーを作る(プロセスごとに 1 回だけ)。"""
-    return all_strategies()[name]()
+    """名前からストラテジーを取り出す(プロセスごとに 1 回だけ読み込む)。"""
+    return all_strategies()[name]
 
 
 def evaluate(task: tuple[str, str, pd.Timestamp, pd.Timestamp, str]) -> Summary:
@@ -240,7 +240,7 @@ class BacktestFrame(ttk.Frame):
         bar.pack(side="top", fill="x", padx=6, pady=(6, 0))
         ttk.Label(bar, text="ストラテジー").pack(side="left")
         self.strategy_var = tk.StringVar(value=next(iter(self.strategies)))
-        box = ttk.Combobox(bar, textvariable=self.strategy_var, values=list(self.strategies), state="readonly", width=16)
+        box = ttk.Combobox(bar, textvariable=self.strategy_var, values=list(self.strategies), state="readonly", width=26)
         box.pack(side="left", padx=(4, 6))
         box.bind("<<ComboboxSelected>>", lambda e: self._show_description())
         self.description_var = tk.StringVar()
@@ -549,7 +549,7 @@ class DetailTab(ttk.Frame):
         if bars is None:
             self.status_var.set(f"{code} の株価データがありません。先に python core_gather.py {code} を実行してください。")
             return
-        strategy = self.app.strategies[settings.strategy]()
+        strategy = self.app.strategies[settings.strategy]
         self.code = code
         self.trades = run_backtest(strategy, bars, settings.start, settings.end, settings.fill)
         self.status_var.set(f"{code} {self.app.stock_name(code)}  ({settings.describe()})")

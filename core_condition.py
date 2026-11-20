@@ -66,6 +66,11 @@ class Condition(ABC):
     # パラメータを持つとき、name の「(」より前の部分
     base_name: str = ""
 
+    @classmethod
+    def key(cls) -> str:
+        """種類の名前(CONDITION_TYPES のキー。保存するときの識別子)。パラメータを持つなら base_name、なければ name。"""
+        return cls.base_name or cls.name
+
     def __init__(self, **values):
         """パラメータを受け取る。指定のない項目はクラスの既定値(使う側の指定 > クラスの既定値)。"""
         self.values = resolve_params(self.params, values)
@@ -315,6 +320,13 @@ class PriceVsSMA(Condition):
                 for i in rows
             ]
         return result
+
+
+# コンディションの種類(種類の名前 -> クラス)。スクリーニングの条件の追加で選べる一覧(条件カタログ)。
+# 条件セット・ストラテジーの保存では、種類の名前とパラメータの組でコンディションを表す
+CONDITION_TYPES: dict[str, type[Condition]] = {
+    cls.key(): cls for cls in (RSIDivergence, SMACross, SMAPerfectOrder, PriceVsSMA)
+}
 
 
 def _presets(*conditions: Condition) -> dict[str, Condition]:

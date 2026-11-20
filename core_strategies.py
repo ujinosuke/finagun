@@ -1,21 +1,38 @@
-"""ストラテジー(売買戦略)の基本クラスとその種類。
+"""ストラテジー(売買戦略)と条件セット。
 
-ストラテジーは「いつ・いくらで買い、どこで利確・損切りするか」を決める。
-複数銘柄の集計・手数料・資金管理などは、バックテスト(fina_bktest.py)が受け持つ。
+設計は pico_strategy-screening-design.md。層は次のとおり:
+    core_indicators / core_oscillators   値を出す(SMA・MACD・RSI など)
+    core_condition                       値を読んで状態を判定する(クロス・パーフェクトオーダーなど)
+    core_strategies(このファイル)       条件の束(条件セット)+ 出口ルール = ストラテジー
+    fina_screening / fina_bktest         条件セット・ストラテジーを使う画面
 
-ストラテジーの役目は 2 つ:
+条件セット(ConditionSet)は、条件を 2 層で組み合わせる:
+    シグナル層(OR)        買いの合図になる条件。どれか 1 つが成り立てば候補
+    フィルター層(AND+NOT)  環境の条件。すべて成り立つこと。「除外」の行は、成り立ったら見送る
+    合成式: (シグナルのどれか) AND (フィルターのすべて) AND NOT (除外のどれか)
+    スクリーニングでは、シグナルは「直近 N 本以内に成り立った」で拾い(新鮮さ)、フィルターは最新の足で調べる。
+    バックテストでは、シグナルとフィルターを同じ足で調べる。
+
+ストラテジー(StrategyDef)は「名前・説明・買い条件(条件セット)・出口ルール(ExitRule)」の定義。
+RuleStrategy が定義を Strategy として動かし、スクリーニングとバックテストで同じ定義を使う。
+出口ルールは部品を選んで組み合わせる:
+    利確      固定% / 直近高値 / なし
+    損切り    固定% / リスクリワード(利幅から逆算) / ATR / なし
+    その他    日数(○本たったら終値で売る)、条件による決済(条件が成り立ったら売る)
+    利確・損切りの値が決まらない合図(直近高値がない、利幅が小さすぎるなど)は見送る
+
+Strategy の役目(基本クラス。コードで書くストラテジーもこれを継承する):
     entries()  足を最初から最後まで調べ、買いの合図(Entry)の一覧を返す。
                Entry には、買う日・買値・利確の値(take_profit)・損切りの値(stop_loss)を入れる
     exit_on()  保有中の足 1 本ごとに呼ばれ、売るなら Exit を返す。
                初期の実装は「終値が take_profit 以上なら利確、stop_loss 以下なら損切り」
-
-trades() は、1 銘柄について「買い → 売り」を 1 つずつ順に進め、取引(Trade)の一覧を返す。
-保有中に出た買いの合図は使わない(同時に持つのは 1 つだけ)。
-fina_bktest.py は、各銘柄の trades() を集めて成績を出す。
+    trades()   1 銘柄について「買い → 売り」を 1 つずつ順に進め、取引(Trade)の一覧を返す。
+               保有中に出た買いの合図は使わない(同時に持つのは 1 つだけ)
 
 約束ごと(CLAUDE.md も参照):
     - 買いのみ(レバレッジなし)。売りから入る取引は扱わない
     - 断りがなければ、株価は終値(Close)だけを使う。売買も、判定した足の終値で行ったことにする
+      (例外: ATR の損切りは、定義どおり高値・安値・終値で ATR を計算する)
     - trades() の fill で約定の値を選べる(FILL_MODES)。
         終値      : ストラテジーが決めた値(判定した足の終値)で約定する
         翌日の始値: 買い・売りを判定した足の次の足の始値で約定する。
@@ -23,28 +40,31 @@ fina_bktest.py は、各銘柄の trades() を集めて成績を出す。
     - その足の時点で分かることだけを使う(未来の足を見ない)。
       山や谷のように、後の足が出そろって確定するものは、確定した足から使う
 
-新しいストラテジーの作り方:
-    1. Strategy を継承し、name と description を決める
-    2. entries() を書く。利確・損切りが「値に届いたら売る」でなければ exit_on() も書く
-    3. 下の STRATEGIES に登録する
-    利用者が自分で作るストラテジーは、このファイルではなく usr_strategies.py に書く。
+保存の形(JSON。条件は「種類の名前・状態・パラメータ」で表す):
+    条件セット {"name": "...", "signals": [{"condition": "SMAクロス", "state": "up", "params": {"fast": 5, "slow": 25}}],
+                "filters": [{"condition": "終値とSMA", "state": "down", "params": {"period": 75}, "exclude": true}],
+                "freshness_days": 5}
+    利用者が保存した条件セット(スクリーニングのユーザープリセット)は screening_presets.json に置く。
 
 使い方(動作の確認):
     python core_strategies.py                 # 登録されているストラテジーの一覧
     python core_strategies.py 7203            # 7203 で全ストラテジーの取引を表示
-    python core_strategies.py 7203 GC75-200   # ストラテジーを指定
+    python core_strategies.py 7203 <名前>     # ストラテジーを指定
 """
 
+import json
 import math
+import os
 import sys
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
+import numpy as np
 import pandas as pd
 
-from core_condition import pivots
-from core_gather import csv_path_for, load_saved
-from core_indicators import sma
+from core_condition import CONDITION_TYPES, Condition, pivots
+from core_gather import BASE_DIR, csv_path_for, load_saved
+from core_indicators import Param, atr, resolve_params
 
 
 # 約定の値の選び方(名前 -> 表示名)
@@ -55,6 +75,16 @@ FILL_MODES = {
     FILL_NEXT_OPEN: "翌日の始値",
 }
 
+# シグナルの新鮮さ(直近何本以内に成り立ったシグナルを拾うか)の既定。設計の決め残し。仮に 5 本(1 週間)
+DEFAULT_FRESHNESS = 5
+MAX_FRESHNESS = 250
+
+# 利用者が保存した条件セット(スクリーニングのユーザープリセット)
+PRESETS_PATH = BASE_DIR / "screening_presets.json"
+PRESETS_VERSION = 1
+
+
+# ---- 売買の記録 ----
 
 @dataclass(frozen=True)
 class Entry:
@@ -94,6 +124,8 @@ class Trade:
         """保有した足の本数。保有中なら None。"""
         return None if self.exit is None else self.exit.index - self.entry.index
 
+
+# ---- ストラテジーの基本クラス ----
 
 class Strategy(ABC):
     """ストラテジーの基本クラス。
@@ -172,6 +204,7 @@ def next_open(bars: pd.DataFrame, i: int) -> float:
     value = bars["Open"].iloc[i + 1]
     return float(bars["Close"].iloc[i + 1] if math.isnan(value) else value)
 
+
 def recent_high_above(close: pd.Series, i: int, price: float, left: int, right: int, lookback: int):
     """i 本目の時点で確定している山(終値)のうち、price より高く、i に一番近いものを返す。
 
@@ -189,74 +222,508 @@ def recent_high_above(close: pd.Series, i: int, price: float, left: int, right: 
     return None
 
 
-class GoldenCross75200(Strategy):
-    """75 日線と 200 日線のゴールデンクロスで買う。直近高値で利確、リスクリワード 2 倍の位置で損切り。
+# ---- 条件セット ----
 
-    買い  : SMA75 が SMA200 を下から上に抜けた日(前日 SMA75 ≦ SMA200、当日 SMA75 > SMA200)の終値で買う
-    利確  : 直近高値。その日までに確定した終値の山のうち、買値より高く、一番最近のもの。
-            山は左右 PIVOT_LEFT / PIVOT_RIGHT 本より終値が高い足で、LOOKBACK 本前までさかのぼって探す。
-            見つからなければ、その合図は見送る
-    見送り: 利幅(直近高値 - 買値)が買値の MIN_REWARD(3%)未満なら、その合図は見送る
-    損切り: リスクリワードが 2 倍になる位置。利幅(直近高値 - 買値)の半分だけ買値から下
-            (損切り = 買値 - (直近高値 - 買値) / 2)
-    売り  : 終値が利確の値以上、または損切りの値以下になった日の終値で売る
+@dataclass(frozen=True, eq=False)
+class ConditionRow:
+    """条件セットの 1 行。コンディションの種類・状態・パラメータ(と、フィルター層なら除外か)。
+
+    condition は core_condition.CONDITION_TYPES のキー、state はそのコンディションの状態の名前。
+    作るときにコンディションを組み立てて、種類・状態・パラメータが正しいかを確かめる(正しくなければ ValueError)。
     """
+    condition: str
+    state: str
+    params: dict = field(default_factory=dict)
+    exclude: bool = False  # フィルター層で「除外」(成り立ったら見送る)
 
-    name = "GC75-200"
-    description = "SMA75/200 のゴールデンクロスで買い、直近高値で利確、リスクリワード 2 倍で損切り"
-    FAST = 75
-    SLOW = 200
-    PIVOT_LEFT = 5     # 山の判定に使う左側の本数
-    PIVOT_RIGHT = 5    # 山の判定に使う右側の本数(この本数だけ確定が遅れる)
-    LOOKBACK = 250     # 直近高値をさかのぼって探す本数(日足でおよそ 1 年)
-    REWARD_RISK = 2.0  # 利幅 / 損失幅
-    MIN_REWARD = 0.03  # 利幅の下限(買値に対する割合)。これ未満の合図は見送る
+    def __post_init__(self):
+        if self.condition not in CONDITION_TYPES:
+            raise ValueError(f"コンディションの種類がありません: {self.condition}")
+        built = CONDITION_TYPES[self.condition](**self.params)  # パラメータが正しくなければ ValueError
+        if self.state not in built.states:
+            raise ValueError(f"{built.name} に状態「{self.state}」はありません")
+        object.__setattr__(self, "params", dict(built.values))  # 指定のない項目も既定値で埋めて持つ
+        object.__setattr__(self, "_built", built)
 
-    def entries(self, bars: pd.DataFrame) -> list[Entry]:
-        close = bars["Close"]
-        fast, slow = sma(close, self.FAST), sma(close, self.SLOW)
-        crossed = (fast > slow) & (fast.shift(1) <= slow.shift(1))
-        result = []
-        for i in [int(n) for n in crossed.to_numpy().nonzero()[0]]:
-            price = close.iloc[i]
-            high = recent_high_above(close, i, price, self.PIVOT_LEFT, self.PIVOT_RIGHT, self.LOOKBACK)
-            if high is None:
-                continue  # 直近高値がないので見送る
-            high_index, take_profit = high
-            if take_profit - price < price * self.MIN_REWARD:
-                continue  # 利幅が小さすぎるので見送る
-            stop_loss = price - (take_profit - price) / self.REWARD_RISK
-            result.append(Entry(
-                i, bars.index[i], price, take_profit, stop_loss,
-                note=f"直近高値 {bars.index[high_index]:%Y-%m-%d} {take_profit:,.1f}",
-            ))
-        return result
+    @property
+    def built(self) -> Condition:
+        """パラメータを決めたコンディション。"""
+        return self._built
+
+    @property
+    def state_label(self) -> str:
+        return self.built.states[self.state].label
+
+    @property
+    def label(self) -> str:
+        """文として読める表示(例: SMAクロス(5,25) の「ゴールデン」)。"""
+        return f"{self.built.name} の「{self.state_label}」"
+
+    def to_json(self, with_exclude: bool = False) -> dict:
+        data = {"condition": self.condition, "state": self.state, "params": dict(self.params)}
+        if with_exclude:
+            data["exclude"] = self.exclude
+        return data
+
+    @classmethod
+    def from_json(cls, data) -> "ConditionRow":
+        if not isinstance(data, dict):
+            raise ValueError(f"条件の形が違います: {data!r}")
+        params = data.get("params") or {}
+        if not isinstance(params, dict):
+            raise ValueError(f"パラメータの形が違います: {params!r}")
+        return cls(str(data.get("condition", "")), str(data.get("state", "")), params, bool(data.get("exclude", False)))
 
 
-# 組み込みのストラテジー(名前 -> クラス)
-STRATEGIES: dict[str, type[Strategy]] = {
-    GoldenCross75200.name: GoldenCross75200,
+@dataclass(frozen=True)
+class Evaluation:
+    """条件セットを 1 銘柄の足で調べた結果(足と同じ行)。"""
+    frames: list[pd.DataFrame]   # 条件の行ごとの compute() の結果(signals、filters の順)
+    signal_hits: list[pd.Series] # シグナルの行ごとの真偽
+    filter_ok: pd.Series         # フィルター層をすべて満たしているか(除外も含む)
+    buy: pd.Series               # シグナルのどれか AND フィルター(同じ足で調べたもの。バックテストで使う)
+
+
+@dataclass(frozen=True)
+class ConditionSet:
+    """条件セット(シグナル層 OR + フィルター層 AND+NOT)。"""
+    name: str = ""
+    signals: tuple[ConditionRow, ...] = ()
+    filters: tuple[ConditionRow, ...] = ()
+    freshness_days: int = DEFAULT_FRESHNESS  # スクリーニングで、直近何本以内のシグナルを拾うか
+
+    def evaluate(self, bars: pd.DataFrame) -> Evaluation:
+        """足の全体を調べる。同じコンディション(パラメータも同じ)は 1 回だけ計算する。"""
+        computed: dict[str, pd.DataFrame] = {}
+
+        def frame(row: ConditionRow) -> pd.DataFrame:
+            name = row.built.name
+            if name not in computed:
+                computed[name] = row.built.compute(bars)
+            return computed[name]
+
+        frames = [frame(row) for row in (*self.signals, *self.filters)]
+        signal_hits = [frame(row)[row.state].astype(bool) for row in self.signals]
+        filter_ok = pd.Series(True, index=bars.index)
+        for row in self.filters:
+            state = frame(row)[row.state].astype(bool)
+            filter_ok &= ~state if row.exclude else state
+        if signal_hits:
+            any_signal = pd.concat(signal_hits, axis=1).any(axis=1)
+        else:
+            any_signal = pd.Series(False, index=bars.index)
+        return Evaluation(frames, signal_hits, filter_ok, any_signal & filter_ok)
+
+    def describe(self) -> str:
+        """1 行の説明(例: SMAクロス(5,25) の「ゴールデン」 / 条件: 終値とSMA(200) の「上」)。"""
+        parts = [" または ".join(row.label for row in self.signals) or "シグナルなし"]
+        musts = [row.label for row in self.filters if not row.exclude]
+        nots = [row.label for row in self.filters if row.exclude]
+        if musts:
+            parts.append("条件: " + "、".join(musts))
+        if nots:
+            parts.append("除外: " + "、".join(nots))
+        return " / ".join(parts)
+
+    def to_json(self) -> dict:
+        return {
+            "name": self.name,
+            "signals": [row.to_json() for row in self.signals],
+            "filters": [row.to_json(with_exclude=True) for row in self.filters],
+            "freshness_days": self.freshness_days,
+        }
+
+    @classmethod
+    def from_json(cls, data) -> "ConditionSet":
+        if not isinstance(data, dict):
+            raise ValueError("条件セットの形が違います")
+        freshness = data.get("freshness_days", DEFAULT_FRESHNESS)
+        if isinstance(freshness, bool) or not isinstance(freshness, int) or not 1 <= freshness <= MAX_FRESHNESS:
+            raise ValueError(f"新鮮さは 1 - {MAX_FRESHNESS} の整数で指定してください: {freshness!r}")
+        return cls(
+            str(data.get("name", "")),
+            tuple(ConditionRow.from_json(row) for row in data.get("signals") or []),
+            tuple(ConditionRow.from_json(row) for row in data.get("filters") or []),
+            freshness,
+        )
+
+
+# ---- 出口ルールの部品 ----
+
+class ExitPart:
+    """出口ルールの部品の基本クラス。パラメータは Param で宣言し、コンストラクタ引数で受け取る。"""
+
+    key: str = ""                  # 種類の名前(保存するときの識別子)
+    params: tuple[Param, ...] = ()
+
+    def __init__(self, **values):
+        self.values = resolve_params(self.params, values)
+
+    @property
+    def name(self) -> str:
+        """パラメータ込みの名前(例: 固定%(10.0))。"""
+        if not self.params:
+            return self.key
+        return f"{self.key}({','.join(f'{v:g}' for v in self.values.values())})"
+
+    def to_json(self) -> dict:
+        return {"kind": self.key, "params": dict(self.values)}
+
+
+class TakeProfitPart(ExitPart):
+    """利確の決め方。"""
+
+    def level(self, bars: pd.DataFrame, i: int, price: float) -> tuple[float, str] | None:
+        """i 本目に price で買うときの (利確の値, 説明)。決まらなければ None(その合図は見送る)。"""
+        raise NotImplementedError
+
+
+class StopLossPart(ExitPart):
+    """損切りの決め方。"""
+
+    needs_take_profit = False  # 利確の値から決めるか(リスクリワード)
+
+    def level(self, bars: pd.DataFrame, i: int, price: float, take_profit: float) -> tuple[float, str] | None:
+        """i 本目に price で買うときの (損切りの値, 説明)。決まらなければ None(その合図は見送る)。"""
+        raise NotImplementedError
+
+
+class FixedTakeProfit(TakeProfitPart):
+    """固定%: 買値の +pct% で利確する。"""
+    key = "固定%"
+    params = (Param("pct", "利確(+%)", 10.0, 0.1, 1000.0),)
+
+    def level(self, bars, i, price):
+        return price * (1 + self.values["pct"] / 100), f"利確 +{self.values['pct']:g}%"
+
+
+class RecentHighTakeProfit(TakeProfitPart):
+    """直近高値: 買う時点で確定している、買値より高い一番最近の山(終値)で利確する。
+
+    山は左右 left / right 本より終値が高い足で、lookback 本前までさかのぼって探す。
+    見つからない、または利幅が買値の min_reward% 未満なら、その合図は見送る(出口に由来する見送り)。
+    """
+    key = "直近高値"
+    params = (
+        Param("left", "山の左の本数", 5, 1, 50),
+        Param("right", "山の右の本数", 5, 1, 50),
+        Param("lookback", "さかのぼる本数", 250, 10, 2000),
+        Param("min_reward", "利幅の下限(%)", 3.0, 0.0, 100.0),
+    )
+
+    def level(self, bars, i, price):
+        v = self.values
+        high = recent_high_above(bars["Close"], i, price, v["left"], v["right"], v["lookback"])
+        if high is None:
+            return None  # 直近高値がない
+        high_index, value = high
+        if value - price < price * v["min_reward"] / 100:
+            return None  # 利幅が小さすぎる
+        return value, f"直近高値 {bars.index[high_index]:%Y-%m-%d} {value:,.1f}"
+
+
+class NoTakeProfit(TakeProfitPart):
+    """なし: 利確しない(ほかの売り方で売る)。"""
+    key = "なし"
+
+    def level(self, bars, i, price):
+        return math.inf, ""
+
+
+class FixedStopLoss(StopLossPart):
+    """固定%: 買値の -pct% で損切りする。"""
+    key = "固定%"
+    params = (Param("pct", "損切り(-%)", 5.0, 0.1, 99.0),)
+
+    def level(self, bars, i, price, take_profit):
+        return price * (1 - self.values["pct"] / 100), f"損切り -{self.values['pct']:g}%"
+
+
+class RiskRewardStopLoss(StopLossPart):
+    """リスクリワード: 利幅 ÷ ratio だけ買値から下で損切りする(ratio 2 なら利幅の半分)。"""
+    key = "リスクリワード"
+    params = (Param("ratio", "利幅÷損失幅", 2.0, 0.1, 20.0),)
+    needs_take_profit = True
+
+    def level(self, bars, i, price, take_profit):
+        return price - (take_profit - price) / self.values["ratio"], f"リスクリワード {self.values['ratio']:g}"
+
+
+class ATRStopLoss(StopLossPart):
+    """ATR: 買値 - multiple × ATR(period) で損切りする。ATR が計算できない足の合図は見送る。
+
+    例外: ATR は定義どおり高値・安値・終値で計算する(core_indicators.atr)。
+    """
+    key = "ATR"
+    params = (
+        Param("multiple", "ATR の倍数", 2.0, 0.1, 20.0),
+        Param("period", "ATR の期間", 14, 2, 200),
+    )
+
+    def level(self, bars, i, price, take_profit):
+        value = atr(bars.iloc[: i + 1], self.values["period"]).iloc[-1]  # i 本目までしか見ない
+        if math.isnan(value):
+            return None
+        return price - self.values["multiple"] * value, f"ATR {value:,.1f} × {self.values['multiple']:g}"
+
+
+class NoStopLoss(StopLossPart):
+    """なし: 損切りしない(ほかの売り方で売る)。"""
+    key = "なし"
+
+    def level(self, bars, i, price, take_profit):
+        return 0.0, ""
+
+
+TAKE_PROFITS: dict[str, type[TakeProfitPart]] = {
+    cls.key: cls for cls in (FixedTakeProfit, RecentHighTakeProfit, NoTakeProfit)
+}
+STOP_LOSSES: dict[str, type[StopLossPart]] = {
+    cls.key: cls for cls in (FixedStopLoss, RiskRewardStopLoss, ATRStopLoss, NoStopLoss)
 }
 
 
-def all_strategies() -> dict[str, type[Strategy]]:
-    """組み込みのストラテジーと、usr_strategies.py のストラテジーを合わせて返す。
+def _part_from_json(data, kinds: dict) -> ExitPart:
+    if not isinstance(data, dict) or data.get("kind") not in kinds:
+        raise ValueError(f"出口の部品の指定が正しくありません: {data!r}(選べるもの: {', '.join(kinds)})")
+    return kinds[data["kind"]](**(data.get("params") or {}))
 
+
+@dataclass(frozen=True)
+class ExitRule:
+    """出口ルール。利確と損切りの部品に、日数・条件による決済を足せる。
+
+    max_days       買った足から何本たったら、その足の終値で売るか(0 なら使わない)
+    exit_signals   成り立ったら、その足の終値で売る条件(どれか 1 つ)
+    売りの判定の順: 利確・損切り → 条件による決済 → 日数
+    """
+    take_profit: TakeProfitPart
+    stop_loss: StopLossPart
+    max_days: int = 0
+    exit_signals: tuple[ConditionRow, ...] = ()
+
+    def __post_init__(self):
+        if self.stop_loss.needs_take_profit and isinstance(self.take_profit, NoTakeProfit):
+            raise ValueError("リスクリワードの損切りには、利確の値が要ります(利確を「なし」にできません)")
+        if isinstance(self.max_days, bool) or not isinstance(self.max_days, int) or not 0 <= self.max_days <= 5000:
+            raise ValueError(f"日数は 0 - 5000 の整数で指定してください: {self.max_days!r}")
+        if (isinstance(self.take_profit, NoTakeProfit) and isinstance(self.stop_loss, NoStopLoss)
+                and not self.max_days and not self.exit_signals):
+            raise ValueError("売り方が 1 つもありません(利確・損切り・日数・条件のどれかを決めてください)")
+
+    def describe(self) -> str:
+        parts = []
+        if not isinstance(self.take_profit, NoTakeProfit):
+            parts.append(f"利確 {self.take_profit.name}")
+        if not isinstance(self.stop_loss, NoStopLoss):
+            parts.append(f"損切り {self.stop_loss.name}")
+        if self.max_days:
+            parts.append(f"{self.max_days} 本で決済")
+        if self.exit_signals:
+            parts.append("売り: " + " または ".join(row.label for row in self.exit_signals))
+        return "、".join(parts)
+
+    def to_json(self) -> dict:
+        return {
+            "take_profit": self.take_profit.to_json(),
+            "stop_loss": self.stop_loss.to_json(),
+            "max_days": self.max_days,
+            "exit_signals": [row.to_json() for row in self.exit_signals],
+        }
+
+    @classmethod
+    def from_json(cls, data) -> "ExitRule":
+        if not isinstance(data, dict):
+            raise ValueError("出口ルールの形が違います")
+        return cls(
+            _part_from_json(data.get("take_profit"), TAKE_PROFITS),
+            _part_from_json(data.get("stop_loss"), STOP_LOSSES),
+            data.get("max_days", 0),
+            tuple(ConditionRow.from_json(row) for row in data.get("exit_signals") or []),
+        )
+
+
+# ---- 定義から動くストラテジー ----
+
+@dataclass(frozen=True)
+class StrategyDef:
+    """ストラテジーの定義(名前・説明・買い条件・出口ルール)。スクリーニングとバックテストで共用する。"""
+    name: str
+    buy: ConditionSet
+    exit: ExitRule
+    description: str = ""  # 空なら、買い条件と出口ルールから作る
+
+    def __post_init__(self):
+        if not self.name.strip():
+            raise ValueError("ストラテジーの名前がありません")
+        if not self.buy.signals:
+            raise ValueError(f"{self.name}: 買いのシグナルが 1 つもありません")
+
+    def describe(self) -> str:
+        return self.description or f"買い: {self.buy.describe()} / {self.exit.describe()}"
+
+    def to_json(self) -> dict:
+        return {"name": self.name, "description": self.description,
+                "buy": self.buy.to_json(), "exit": self.exit.to_json()}
+
+    @classmethod
+    def from_json(cls, data) -> "StrategyDef":
+        if not isinstance(data, dict):
+            raise ValueError("ストラテジーの形が違います")
+        return cls(str(data.get("name", "")), ConditionSet.from_json(data.get("buy")),
+                   ExitRule.from_json(data.get("exit")), str(data.get("description", "")))
+
+
+class RuleStrategy(Strategy):
+    """StrategyDef(条件セット + 出口ルール)で動くストラテジー。
+
+    買い: シグナルのどれかが成り立ち、同じ足でフィルターを満たした足の終値で買う。
+          利確・損切りの値が決まらない合図は見送る
+    売り: 出口ルール(ExitRule)のとおり
+    """
+
+    def __init__(self, definition: StrategyDef):
+        self.definition = definition
+        self.name = definition.name
+        self.description = definition.describe()
+        self._exit_cache: tuple[int, pd.Series] | None = None  # (足の id, 条件による決済が成り立つ足)
+
+    def entries(self, bars: pd.DataFrame) -> list[Entry]:
+        buy, rule = self.definition.buy, self.definition.exit
+        result = buy.evaluate(bars)
+        close = bars["Close"]
+        entries = []
+        for i in map(int, np.flatnonzero(result.buy.to_numpy())):
+            price = float(close.iloc[i])
+            if math.isnan(price):
+                continue
+            take_profit = rule.take_profit.level(bars, i, price)
+            if take_profit is None:
+                continue
+            stop_loss = rule.stop_loss.level(bars, i, price, take_profit[0])
+            if stop_loss is None:
+                continue
+            fired = [row.label for row, hit in zip(buy.signals, result.signal_hits) if hit.iloc[i]]
+            note = "、".join(fired + [text for _, text in (take_profit, stop_loss) if text])
+            entries.append(Entry(i, bars.index[i], price, take_profit[0], stop_loss[0], note))
+        return entries
+
+    def _exit_signal(self, bars: pd.DataFrame) -> pd.Series | None:
+        """条件による決済が成り立つ足(どれか 1 つ)。同じ足では 1 回だけ計算する。"""
+        rows = self.definition.exit.exit_signals
+        if not rows:
+            return None
+        if self._exit_cache is None or self._exit_cache[0] != id(bars):
+            hits = [row.built.compute(bars)[row.state].astype(bool) for row in rows]
+            self._exit_cache = (id(bars), pd.concat(hits, axis=1).any(axis=1))
+        return self._exit_cache[1]
+
+    def exit_on(self, entry: Entry, bars: pd.DataFrame, i: int) -> Exit | None:
+        exit_ = super().exit_on(entry, bars, i)  # 利確・損切り
+        if exit_ is not None:
+            return exit_
+        close = float(bars["Close"].iloc[i])
+        if math.isnan(close):
+            return None
+        signal = self._exit_signal(bars)
+        if signal is not None and signal.iloc[i]:
+            return Exit(i, bars.index[i], close, "条件で決済")
+        rule = self.definition.exit
+        if rule.max_days and i - entry.index >= rule.max_days:
+            return Exit(i, bars.index[i], close, f"{rule.max_days} 本で決済")
+        return None
+
+
+# ---- 組み込みのストラテジー ----
+
+def _row(condition: str, state: str, exclude: bool = False, **params) -> ConditionRow:
+    return ConditionRow(condition, state, params, exclude)
+
+
+# 組み込みのストラテジー(使い方の例を兼ねる)。旧 GC75-200 の出口(直近高値で利確・リスクリワード 2 倍で損切り・
+# 利幅 3% 未満は見送り)は、出口の部品「直近高値」「リスクリワード」として残している
+BUILTIN_STRATEGIES: tuple[StrategyDef, ...] = (
+    StrategyDef(
+        "SMA順張り",
+        ConditionSet(
+            "SMA順張り",
+            signals=(_row("SMAクロス", "up", fast=5, slow=25),),
+            filters=(_row("終値とSMA", "up", period=200), _row("終値とSMA", "down", exclude=True, period=75)),
+        ),
+        ExitRule(RecentHighTakeProfit(), RiskRewardStopLoss(ratio=2.0)),
+        "SMA5 が SMA25 を上抜けで買い(終値が SMA200 より上、SMA75 より下なら見送り)。直近高値で利確、リスクリワード 2 倍で損切り",
+    ),
+    StrategyDef(
+        "RSIダイバージェンス逆張り",
+        ConditionSet("RSIダイバージェンス逆張り", signals=(_row("RSIダイバージェンス", "bullish"),)),
+        ExitRule(FixedTakeProfit(pct=8.0), ATRStopLoss(multiple=2.0), max_days=40),
+        "RSI の強気ダイバージェンスで買い。+8% で利確、ATR の 2 倍で損切り、40 本たったら決済",
+    ),
+)
+
+# スクリーニングの組み込みの条件セット(ストラテジーの買い条件のほかに並べるもの)
+BUILTIN_SETS: tuple[ConditionSet, ...] = (
+    ConditionSet("SMAゴールデンクロス", signals=(
+        _row("SMAクロス", "up", fast=5, slow=25), _row("SMAクロス", "up", fast=25, slow=75))),
+    ConditionSet("パーフェクトオーダー(上昇)", filters=(_row("パーフェクトオーダー", "up"),)),
+)
+
+
+def all_strategies() -> dict[str, Strategy]:
+    """組み込みのストラテジーと、usr_strategies.py のストラテジーを合わせて返す(名前 -> ストラテジー)。
+
+    usr_strategies.py には、StrategyDef(定義)でも Strategy のクラス(コードで書いたもの)でも登録できる。
     usr_strategies.py はこのファイルを読み込むので、ここで後から読み込む(循環を避ける)。
     """
     from usr_strategies import USER_STRATEGIES
 
-    duplicated = STRATEGIES.keys() & USER_STRATEGIES.keys()
-    if duplicated:
-        raise ValueError(f"ストラテジーの名前が組み込みと重なっています: {', '.join(sorted(duplicated))}")
-    return STRATEGIES | USER_STRATEGIES
+    strategies: dict[str, Strategy] = {d.name: RuleStrategy(d) for d in BUILTIN_STRATEGIES}
+    for item in USER_STRATEGIES:
+        strategy = RuleStrategy(item) if isinstance(item, StrategyDef) else item()
+        if strategy.name in strategies:
+            raise ValueError(f"ストラテジーの名前が重なっています: {strategy.name}")
+        strategies[strategy.name] = strategy
+    return strategies
+
+
+# ---- ユーザープリセット(利用者が保存した条件セット) ----
+
+def load_user_presets() -> tuple[list[ConditionSet], list[str]]:
+    """screening_presets.json の条件セット。読めなかったものは飛ばし、その理由を 2 つ目に返す。"""
+    if not PRESETS_PATH.exists():
+        return [], []
+    try:
+        with open(PRESETS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        return [], [f"{PRESETS_PATH.name} を読めません: {e}"]
+    presets, problems = [], []
+    for item in data.get("presets", []) if isinstance(data, dict) else []:
+        try:
+            preset = ConditionSet.from_json(item)
+            if not preset.name:
+                raise ValueError("名前がありません")
+            presets.append(preset)
+        except ValueError as e:
+            name = item.get("name", "?") if isinstance(item, dict) else "?"
+            problems.append(f"「{name}」を読めません: {e}")
+    return presets, problems
+
+
+def save_user_presets(presets: list[ConditionSet]) -> None:
+    """条件セットを screening_presets.json に保存する(.tmp に書いてから置き換える)。"""
+    data = {"version": PRESETS_VERSION, "presets": [p.to_json() for p in presets]}
+    temporary = PRESETS_PATH.with_name(PRESETS_PATH.name + ".tmp")
+    with open(temporary, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(temporary, PRESETS_PATH)
 
 
 def main() -> int:
     strategies = all_strategies()
     if len(sys.argv) < 2:
-        for name, cls in strategies.items():
-            print(f"{name:12} {cls.description}")
+        for name, strategy in strategies.items():
+            print(f"{name:16} {strategy.description}")
         return 0
     code = sys.argv[1].upper().removesuffix(".T")
     names = sys.argv[2:] or list(strategies)
@@ -270,7 +737,7 @@ def main() -> int:
         return 1
     bars = bars.dropna(subset=["Close"])
     for name in names:
-        trades = strategies[name]().trades(bars)
+        trades = strategies[name].trades(bars)
         print(f"== {name} / {code}: {len(trades)} 取引")
         for t in trades:
             e = t.entry
