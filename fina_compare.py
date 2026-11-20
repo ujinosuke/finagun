@@ -6,7 +6,7 @@
 比較表
     行に銘柄、列に 銘柄 / コード / 市場 / 株価 / 時価総額 と、次のグループの列を出す
     (表示するグループは「表示する列」のチェックで選ぶ。「値動き」は最初は隠している)。
-        バリュエーション  EV/Rev / EV/EBITDA / PER(実績) / PER(予想) / PSR / 配当利回り(yfinance から取得)
+        バリュエーション  EV/Rev / EV/EBITDA / PER(実績) / PER(予想) / PBR / PSR / 配当利回り(yfinance から取得)
         騰落率            1か月 / 3か月 / 6か月 / 1年
         トレンド          52週高値比 / 52週安値比 / 移動平均(25・75・200 日)からの乖離率
         値動き            RSI(14) / ボラティリティ(20・60 日、年率) / ATR(14)% / β(1年) / 売買代金(20 日平均)
@@ -123,6 +123,7 @@ COLUMNS = {
     "ev_ebitda": ("EV/EBITDA", 92, "e"),
     "per": ("PER(実績)", 84, "e"),
     "forward_per": ("PER(予想)", 84, "e"),
+    "pbr": ("PBR", 70, "e"),
     "psr": ("PSR", 84, "e"),
     "dividend_yield": ("配当利回り", 92, "e"),
     "ret_1m": ("1か月", 76, "e"),
@@ -153,6 +154,7 @@ METRICS = {
     "ev_ebitda": "enterpriseToEbitda",
     "per": "trailingPE",
     "forward_per": "forwardPE",
+    "pbr": "priceToBook",
     "psr": "priceToSalesTrailing12Months",
     "dividend_yield": "dividendYield",  # yfinance 1.x では % の値(2.92 なら 2.92%)
 }
@@ -221,6 +223,7 @@ EXCEL_FORMATS = {
     "ev_ebitda": ("#,##0.00", 12),
     "per": ("#,##0.00", 11),
     "forward_per": ("#,##0.00", 11),
+    "pbr": ("#,##0.00", 9),
     "psr": ("#,##0.00", 10),
     "dividend_yield": ("0.00%", 12),
     **{c: ("+0.00%;-0.00%;0.00%", 10) for c in SIGNED_PERCENT},
