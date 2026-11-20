@@ -182,7 +182,7 @@ class TreemapCanvas(tk.Canvas):
 
     # ---- マウス ----
 
-    def _item_at(self, x: float, y: float) -> TreemapItem | None:
+    def item_at(self, x: float, y: float) -> TreemapItem | None:
         for (rx, ry, rw, rh), item in self.hit:
             if rx <= x < rx + rw and ry <= y < ry + rh:
                 return item
@@ -190,7 +190,7 @@ class TreemapCanvas(tk.Canvas):
 
     def _on_motion(self, event):
         self.delete("tooltip")
-        item = self._item_at(event.x, event.y)
+        item = self.item_at(event.x, event.y)
         if item is None:
             return
         text = item.detail or item.label
@@ -206,6 +206,6 @@ class TreemapCanvas(tk.Canvas):
         self.tag_raise(label, background)
 
     def _on_double_click(self, event):
-        item = self._item_at(event.x, event.y)
+        item = self.item_at(event.x, event.y)
         if item is not None and self.on_open is not None:
             self.on_open(item.key)

@@ -32,7 +32,8 @@ stock_database フォルダの日足データ(core_gather.py で取得)を読み
     図形の選択      カーソルモードで図形をクリック(点の印が付く)
     図形の移動      カーソルモードで図形をドラッグ
     図形の色        色のボタンを押すと、選択中の図形とこれから描く図形の色が変わる
-    図形の削除      図形を右クリック、または選択して Delete。「全消去」ですべて削除
+    図形の削除      図形を右クリックして「図形を削除」、または選択して Delete。「全消去」ですべて削除
+    右クリック      チャートのメニュー(グループに追加・コードをコピー。図形の上なら図形を削除。gui_menu.py)
 
 表示の設定と図形は、銘柄ごとに charts/<コード>.json に保存する(core_chartstore.py。仕様は chart-state-spec.md)。
 どのプログラムから開いても、同じ銘柄なら同じ図形・表示になる。
@@ -71,6 +72,7 @@ from core_gather import csv_path_for, load_saved
 from core_chartstore import chart_mtime, delete_chart, load_chart, save_chart
 from core_settings import app_title, load_settings, market_colors, update_settings
 from core_stocks import load_listed, load_stock_names, stock_index
+from gui_menu import SHOWING, MenuAction, popup_stock_menu
 from gui_widgets import StockSearchBox
 from core_indicators import BollingerBands, Indicator, SMAEssential4, VolumeMA
 from core_oscillators import OSCILLATORS
@@ -843,10 +845,13 @@ class ChartFrame(ttk.Frame):
             else:
                 self._cancel_pending()
             return
-        if event.inaxes is self.ax:
-            drawing = self._drawing_at(event.x, event.y)
-            if drawing:
-                self._remove_drawing(drawing)
+        # 作図中でないときは、右クリックのメニュー(gui_menu.py)を出す。図形の上なら「図形を削除」も出す
+        drawing = self._drawing_at(event.x, event.y) if event.inaxes is self.ax else None
+        if event.guiEvent is None or self.code is None:
+            return
+        actions = [MenuAction("図形を削除", lambda: self._remove_drawing(drawing))] if drawing else []
+        popup_stock_menu(self.canvas.get_tk_widget(), event.guiEvent, codes=[self.code], app_name="ToreCan chart",
+                         chart_note=SHOWING, actions=actions, on_message=self.info_var.set)
 
     def _on_cursor_press(self, event):
         """カーソルモード: 図形の上なら選択して移動を始め、何もない所ならスクロールを始める。"""

@@ -64,6 +64,7 @@ from core_watchlist import WATCHLIST_PATH, add_codes
 from gui_chart import ChartFrame
 from gui_conditionset import ConditionSetEditor
 from gui_theme import PAD, apply_theme
+from gui_menu import bind_tree, popup_stock_menu
 from gui_widgets import add_to_watchlist, ask_watchlist_group
 
 # 市場の選択肢(表示名 -> 「市場・商品区分」の先頭の文字)。先頭が最初に選ばれる。
@@ -392,6 +393,9 @@ class ScreeningFrame(ttk.Frame):
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_select())
         self.tree.bind("<Double-1>", self._on_double_click)
         self.tree.bind("<Return>", lambda e: self.open_chart())
+        bind_tree(self.tree, lambda e, code: popup_stock_menu(
+            self.tree, e, codes=[code], app_name="fina_screening", open_chart=self.open_chart,
+            on_message=self.status_var.set))
 
     # ---- スクリーニングの実行 ----
 

@@ -31,6 +31,7 @@
                     チャートの操作は gui_chart.py と同じ
     並べ替え        銘柄を選んで「↑」「↓」ボタン
     銘柄の削除      銘柄を選んで「削除」ボタン、または Delete キー(図形は残る)
+    右クリック      銘柄のメニュー(上へ・下へ・グループから削除・グループに追加・コードをコピー。gui_menu.py)
 """
 
 import math
@@ -49,6 +50,7 @@ from core_watchlist import (
     WATCHLIST_PATH, add_codes, create_group, delete_group, load_groups, move_code, name_error, parse_groups,
     read_watchlist, remove_codes, rename_group, watchlist_mtime, write_selected,
 )
+from gui_menu import SHOWING, MenuAction, bind_tree, popup_stock_menu
 from gui_widgets import StockSearchBox
 
 LIST_WIDTH = 400      # 一覧の最初の幅(ピクセル)
@@ -168,6 +170,17 @@ class WatchlistFrame(ttk.Frame):
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_select())
         self.tree.bind("<Delete>", lambda e: self.remove_stock())
+        bind_tree(self.tree, self._on_right_click)
+
+    def _on_right_click(self, event, code: str):
+        """銘柄の右クリックのメニュー。チャートは右に出しているので「チャートを開く」はグレー。"""
+        codes = self.group["codes"]
+        i = codes.index(code) if code in codes else -1
+        popup_stock_menu(self.tree, event, codes=[code], app_name="fina_watchlist", chart_note=SHOWING, actions=[
+            MenuAction("上へ", lambda: self.move_stock(-1), enabled=i > 0),
+            MenuAction("下へ", lambda: self.move_stock(1), enabled=0 <= i < len(codes) - 1),
+            MenuAction("グループから削除", self.remove_stock),
+        ], on_message=self.status_var.set)
 
     # ---- 保存 ----
 

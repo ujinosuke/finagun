@@ -102,6 +102,7 @@ from core_watchlist import (
 )
 from gui_chart import ChartFrame  # gui_chart を読み込むと、matplotlib の日本語フォントも設定される
 from gui_corrmatrix import CorrMatrix, MatrixLabel, correlation_color
+from gui_menu import MenuAction, bind_tree, popup_stock_menu
 from gui_widgets import SortableTree, StockSearchBox
 
 APP_NAME = "fina_compare"
@@ -988,6 +989,14 @@ class CompareApp(ttk.Frame):
 
     # ---- チャート ----
 
+    def popup_menu(self, widget, event, codes: list[str], open_chart=None, actions=()) -> None:
+        """銘柄の右クリックのメニュー(gui_menu.py)を出す。集計の行などは codes に入れない(項目がグレーになる)。"""
+        codes = [c for c in codes if c and not c.startswith(SUMMARY_PREFIX)]
+        if open_chart is None and codes:
+            open_chart = lambda: self.open_chart(codes[0])
+        popup_stock_menu(widget, event, codes=codes, app_name=APP_NAME, open_chart=open_chart if codes else None,
+                         chart_note="", actions=actions, on_message=self.status_var.set)  # 集計の行はグレーだけ
+
     def open_chart(self, code: str) -> None:
         """銘柄のチャート(gui_chart.py の ChartFrame)を別のウィンドウで開く。開いていれば前に出す。"""
         if not code or code.startswith(SUMMARY_PREFIX):  # 集計の行など
@@ -1119,6 +1128,7 @@ class TableView(ttk.Frame):
         self.tree.bind("<Control-a>", lambda e: self.tree.selection_set(app.codes))
         self.tree.bind("<Double-Button-1>", self._on_double_click)
         self.tree.bind("<Return>", lambda e: app.open_chart(self.tree.focus()))
+        bind_tree(self.tree, self._on_right_click)
 
     # ---- 列のグループ ----
 
@@ -1306,6 +1316,17 @@ class TableView(ttk.Frame):
         self.sort_column = column
         self.refresh()
 
+    def _on_right_click(self, event, iid: str):
+        """比較表の右クリック。対象は選んでいる銘柄(複数可)、チャートは右クリックした行。"""
+        app = self.app
+        selected = [i for i in self.tree.selection() if i in app.codes]
+        editable = bool(selected) and not app.is_holdings  # 保有資産のグループは並びも銘柄も変えられない
+        app.popup_menu(self.tree, event, selected, open_chart=lambda: app.open_chart(iid), actions=[
+            MenuAction("上へ", lambda: app.move_selected(-1), enabled=editable),
+            MenuAction("下へ", lambda: app.move_selected(1), enabled=editable),
+            MenuAction("グループから削除", app.remove_selected, enabled=editable),
+        ])
+
     def _on_double_click(self, event):
         if self.tree.identify_region(event.x, event.y) == "cell":  # 見出しのダブルクリックは並べ替えだけ
             self.app.open_chart(self.tree.identify_row(event.y))
@@ -1356,7 +1377,9 @@ class CorrelationView(ttk.Frame):
         )).pack(side="bottom", fill="x", padx=4, pady=4)
         self.note_var = tk.StringVar()
         ttk.Label(self, textvariable=self.note_var, foreground="#b25e00").pack(side="bottom", fill="x", padx=4)
-        self.matrix = CorrMatrix(self, on_open=self._open)
+        self.matrix = CorrMatrix(self, on_open=self._open,
+                                 on_menu=lambda e, a, b: app.popup_menu(self.matrix.canvas, e, [a, b],
+                                                                        open_chart=lambda: self._open(a, b)))
         self.matrix.pack(side="top", fill="both", expand=True, padx=2)
 
     def show(self) -> None:
@@ -1654,6 +1677,7 @@ class FinancialsView(ttk.Frame):
             columns |= {f"p{i}": (label, 90, "e") for i, label in enumerate(labels)}
         self.table = SortableTree(self.body, columns, stretch="name", height=12)
         self.table.pack(fill="both", expand=True)
+        bind_tree(self.table.tree, lambda e, iid, t=self.table.tree: self.app.popup_menu(t, e, [iid]))
         rows = []
         for code in self.app.codes:
             financials = self.app.financials.get(code)

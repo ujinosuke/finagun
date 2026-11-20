@@ -66,11 +66,14 @@ class CorrMatrix(ttk.Frame):
     """相関マトリクス(スクロールできる Canvas)。
 
     セルのダブルクリックで on_open(行のキー, 列のキー)、見出しの銘柄のダブルクリックで on_open(キー, キー) を呼ぶ。
+    右クリックでは on_menu(event, 行のキー, 列のキー) を同じように呼ぶ(マス・見出しの外では呼ばない)。
     """
 
-    def __init__(self, master, on_open: Callable[[str, str], None] | None = None):
+    def __init__(self, master, on_open: Callable[[str, str], None] | None = None,
+                 on_menu: Callable[[object, str, str], None] | None = None):
         super().__init__(master)
         self.on_open = on_open
+        self.on_menu = on_menu
         self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=0)
         x_scroll = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
         y_scroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
@@ -85,6 +88,7 @@ class CorrMatrix(ttk.Frame):
         self.canvas.bind("<Motion>", self._on_motion)
         self.canvas.bind("<Leave>", lambda e: self.canvas.delete("tooltip"))
         self.canvas.bind("<Double-Button-1>", self._on_double_click)
+        self.canvas.bind("<Button-3>", self._on_right_click)
         self.canvas.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
 
     def set_data(self, labels: list[MatrixLabel], cells: dict[tuple[str, str], Correlation], window: int | None,
@@ -196,12 +200,22 @@ class CorrMatrix(ttk.Frame):
             return self.labels[j] if j < n else None
         return None
 
-    def _on_double_click(self, event):
-        """マスなら on_open(行, 列)、見出しの銘柄なら on_open(銘柄, 銘柄)(その 1 銘柄)を呼ぶ。"""
-        if self.on_open is None:
-            return
+    def _keys_at(self, event) -> tuple[str, str] | None:
+        """マスなら (行, 列)、見出しの銘柄なら (銘柄, 銘柄)。どちらでもなければ None。"""
         cell = self._cell_at(event)
         if cell is not None:
-            self.on_open(cell[0].key, cell[1].key)
-        elif (label := self._header_at(event)) is not None:
-            self.on_open(label.key, label.key)
+            return cell[0].key, cell[1].key
+        label = self._header_at(event)
+        return (label.key, label.key) if label is not None else None
+
+    def _on_double_click(self, event):
+        """マスなら on_open(行, 列)、見出しの銘柄なら on_open(銘柄, 銘柄)(その 1 銘柄)を呼ぶ。"""
+        keys = self._keys_at(event)
+        if keys is not None and self.on_open is not None:
+            self.on_open(*keys)
+
+    def _on_right_click(self, event):
+        keys = self._keys_at(event)
+        if keys is not None and self.on_menu is not None:
+            self.canvas.delete("tooltip")
+            self.on_menu(event, *keys)

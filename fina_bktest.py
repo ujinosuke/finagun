@@ -54,6 +54,7 @@ from core_settings import app_title
 from core_gather import START_DATE, csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from core_strategies import FILL_CLOSE, FILL_MODES, Exit, Strategy, Trade, all_strategies
+from gui_menu import SHOWING, MenuAction, bind_tree, popup_stock_menu
 from gui_widgets import StockSearchBox
 
 # 市場の選択肢(表示名 -> 最初にチェックを入れるか)。「市場・商品区分」の先頭で分け、どれでもなければ「その他」
@@ -374,6 +375,10 @@ class ScreeningTab(ttk.Frame):
             tree = make_table(box, RANK_COLUMNS, height)
             tree.bind("<Double-Button-1>", lambda e, t=tree: self._on_double_click(t, e))
             tree.bind("<Return>", lambda e, t=tree: self._open(t.focus()))
+            # 「チャートを開く」は、ダブルクリックと同じく個別銘柄の深掘りで開く
+            bind_tree(tree, lambda e, code, t=tree: popup_stock_menu(
+                t, e, codes=[code], app_name="fina_bktest", open_chart=lambda: self._open(code),
+                on_message=self.status_var.set))
             self.tables[key] = tree
         ttk.Label(
             self, text="銘柄をダブルクリック(または Enter)で、個別銘柄の深掘りに切り替わります。", foreground="#777777",
@@ -534,6 +539,11 @@ class DetailTab(ttk.Frame):
         self.table = make_table(lower, TRADE_COLUMNS, 8)
         self.table.bind("<Double-Button-1>", self._on_double_click)
         self.table.bind("<Return>", lambda e: self._show_trade(self.table.focus()))
+        # チャートは上に出しているので「チャートを開く」はグレー
+        bind_tree(self.table, lambda e, iid: popup_stock_menu(
+            self.table, e, codes=[self.code] if self.code else [], app_name="fina_bktest", chart_note=SHOWING,
+            actions=[MenuAction("チャートでこの売買を見る", lambda: self._show_trade(iid))],
+            on_message=self.status_var.set))
         ttk.Label(
             lower, text="売買をダブルクリック(または Enter)で、チャートがその位置へ動きます。", foreground="#777777",
         ).pack(side="top", anchor="w", padx=2, pady=(2, 0))

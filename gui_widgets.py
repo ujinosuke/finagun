@@ -181,14 +181,15 @@ class StockSearchBox(ttk.Frame):
 
 
 def ask_watchlist_group(parent, count: int) -> str | None:
-    """銘柄を足すウォッチリストのグループを尋ねる。新しい名前を入力すると、そのグループを作る。取り消しなら None。"""
+    """銘柄を足すグループ(ウォッチリスト・銘柄比較で共通)を尋ねる。新しい名前を入力すると、そのグループを作る。取り消しなら None。"""
     window = tk.Toplevel(parent)
-    window.title("ウォッチリストに追加")
+    window.title("グループに追加")
     window.transient(parent.winfo_toplevel())
     window.resizable(False, False)
     frame = ttk.Frame(window, padding=12)
     frame.pack(fill="both", expand=True)
-    ttk.Label(frame, text=f"{count} 銘柄を追加するグループ(新しい名前を入力すると作ります)").pack(side="top", anchor="w")
+    ttk.Label(frame, text=f"{count} 銘柄を追加するグループ(新しい名前を入力すると作ります)\n"
+                           "グループはウォッチリストと銘柄比較で共通です", justify="left").pack(side="top", anchor="w")
     names = group_names()
     name_var = tk.StringVar(value=names[0])
     box = ttk.Combobox(frame, textvariable=name_var, values=names, width=30)
@@ -198,7 +199,7 @@ def ask_watchlist_group(parent, count: int) -> str | None:
     def accept(_event=None):
         name = name_var.get().strip()
         if name in RESERVED_NAMES:  # 銘柄比較の固定のグループの名前では作れない
-            messagebox.showerror("ウォッチリストに追加", name_error(name, []), parent=window)
+            messagebox.showerror("グループに追加", name_error(name, []), parent=window)
             return
         if name:
             result.append(name)
@@ -229,7 +230,7 @@ def add_to_watchlist(parent, codes: list[str], app_name: str) -> str:
         messagebox.showerror(app_name, f"{WATCHLIST_PATH.name} に保存できません。\n{e}", parent=parent)
         return ""
     skipped = len(set(codes)) - added
-    return f"ウォッチリストの「{group}」に {added} 銘柄を追加しました" + (f"(登録済み {skipped} 銘柄)。" if skipped else "。")
+    return f"グループ「{group}」に {added} 銘柄を追加しました" + (f"(登録済み {skipped} 銘柄)。" if skipped else "。")
 
 
 class SortableTree(ttk.Frame):

@@ -71,6 +71,7 @@ from core_gather import csv_path_for
 from core_stocks import load_listed, normalize, stock_index
 from core_watchlist import watched_codes
 from gui_chart import ChartFrame, TradeMark  # gui_chart を読み込むと、matplotlib の日本語フォントも設定される
+from gui_menu import NOT_SUPPORTED, MenuAction, bind_tree, popup_stock_menu
 from gui_treemap import TreemapCanvas, TreemapItem
 from gui_widgets import SortableTree, StockSearchBox, add_to_watchlist
 
@@ -238,7 +239,7 @@ class HoldingsTab(ttk.Frame):
         bar.pack(side="top", fill="x", padx=4, pady=4)
         self.merge_var = tk.BooleanVar(value=bool(app.store.ui.get("merge", False)))
         ttk.Checkbutton(bar, text="銘柄ごとにまとめる", variable=self.merge_var, command=app.refresh).pack(side="left")
-        for text, command in (("ウォッチリストに追加", self.add_to_watchlist), ("移管", self.transfer),
+        for text, command in (("グループに追加", self.add_to_watchlist), ("移管", self.transfer),
                               ("売却", self.sell), ("買い増し", self.buy), ("チャート", self.open_chart)):
             ttk.Button(bar, text=text, command=command).pack(side="right", padx=(2, 0))
 
@@ -247,14 +248,7 @@ class HoldingsTab(ttk.Frame):
         tree = self.list.tree
         tree.bind("<Double-Button-1>", lambda e: tree.identify_row(e.y) and self.open_chart())
         tree.bind("<Return>", lambda e: self.open_chart())
-        self.menu = tk.Menu(self, tearoff=False)
-        self.menu.add_command(label="チャートを開く", command=self.open_chart)
-        self.menu.add_command(label="買い増しを入力", command=self.buy)
-        self.menu.add_command(label="売却を入力", command=self.sell)
-        self.menu.add_command(label="移管を入力…", command=self.transfer)
-        self.menu.add_separator()
-        self.menu.add_command(label="ウォッチリストに追加…", command=self.add_to_watchlist)
-        tree.bind("<Button-3>", self._on_right_click)
+        bind_tree(tree, self._on_right_click)
 
     def show(self, valuations: list[Valuation]) -> None:
         self.targets = {}
@@ -313,11 +307,13 @@ class HoldingsTab(ttk.Frame):
             return None
         return self.targets[iid]
 
-    def _on_right_click(self, event):
-        iid = self.list.tree.identify_row(event.y)
-        if iid:
-            self.list.tree.selection_set(iid)
-            self.menu.tk_popup(event.x_root, event.y_root)
+    def _on_right_click(self, event, iid: str):
+        instrument_id, key = self.targets[iid]
+        self.app.popup_menu(self.list.tree, event, [instrument_id], open_chart=self.open_chart, actions=[
+            MenuAction("買い増しを入力", self.buy),
+            MenuAction("売却を入力", self.sell),
+            MenuAction("移管を入力…", self.transfer, enabled=key is not None),  # まとめた行では移管できない
+        ])
 
     def open_chart(self) -> None:
         target = self._target()
@@ -335,7 +331,7 @@ class HoldingsTab(ttk.Frame):
         TransferDialog(self.app, target[1])
 
     def add_to_watchlist(self) -> None:
-        """選んだ銘柄(選んでいなければ一覧の全銘柄)を、ウォッチリストのグループに足す。"""
+        """選んだ銘柄(選んでいなければ一覧の全銘柄)を、グループ(ウォッチリスト・銘柄比較で共通)に足す。"""
         selected = self.list.selected()
         iids = [selected] if selected else list(self.targets)
         instruments = self.app.store.instruments
@@ -397,6 +393,9 @@ class TradesTab(ttk.Frame):
         tree.bind("<Double-Button-1>", lambda e: tree.identify_row(e.y) and self.edit())
         tree.bind("<Return>", lambda e: self.edit())
         tree.bind("<Delete>", lambda e: self.delete())
+        bind_tree(tree, lambda e, iid: self.app.popup_menu(
+            tree, e, [self.app.store.trade(int(iid)).instrument_id],
+            actions=[MenuAction("取引を編集", self.edit), MenuAction("取引を削除", self.delete)]))
 
     def show(self, trades: list[Trade]) -> None:
         self.trades = trades
@@ -487,6 +486,9 @@ class RealizedTab(ttk.Frame):
         self.by_stock = SortableTree(panes, REALIZED_BY_STOCK_COLUMNS, stretch="name")
         panes.add(self.list, weight=3)
         panes.add(self.by_stock, weight=1)
+        self.instrument_of: dict[str, str] = {}  # 行 -> 商品 ID(右クリックのメニュー用。2 つの一覧で共通)
+        for table in (self.list, self.by_stock):
+            bind_tree(table.tree, lambda e, iid, t=table.tree: self.app.popup_menu(t, e, [self.instrument_of[iid]]))
 
     def show(self, realized) -> None:
         self.realized = realized
@@ -501,8 +503,10 @@ class RealizedTab(ttk.Frame):
         instruments = self.app.store.instruments
         realized = [r for r in self.realized if year == ALL or r.date[:4] == year]
         rows, totals = [], {}
+        self.instrument_of = {}
         for n, r in enumerate(realized):
             instrument = instruments[r.key[0]]
+            self.instrument_of[f"r{n}"] = instrument.id
             display = (
                 r.date, instrument.code, instrument.name, r.key[1], r.key[2], fmt_quantity(r.quantity),
                 fmt_yen(r.proceeds), fmt_yen(r.cost), fmt_yen(r.profit, signed=True),
@@ -517,6 +521,7 @@ class RealizedTab(ttk.Frame):
         stock_rows = []
         for n, (instrument_id, (count, profit)) in enumerate(totals.items()):
             instrument = instruments[instrument_id]
+            self.instrument_of[f"s{n}"] = instrument_id
             stock_rows.append((
                 f"s{n}", (instrument.code, instrument.name, count, fmt_yen(profit, signed=True)),
                 (instrument.code, instrument.name, count, profit), profit_tag(profit),
@@ -1114,6 +1119,8 @@ class DividendTab(ttk.Frame):
         self.months = SortableTree(panes, MONTH_COLUMNS, stretch="stocks", height=8)
         panes.add(self.list, weight=3)
         panes.add(self.months, weight=2)
+        self.instrument_of: dict[str, str] = {}  # 銘柄の一覧の行 -> 商品 ID(右クリックのメニュー用)
+        bind_tree(self.list.tree, lambda e, iid: self.app.popup_menu(self.list.tree, e, [self.instrument_of[iid]]))
         ttk.Label(self, text="※ 配当は yfinance の情報による参考表示です(税引前)。今後の配当は、発表済みの次回分のほかは"
                              "去年の同じ時期の配当から推定しています(推定)。権利付最終日は土日だけを除いた目安です。",
                   foreground=TEXT_SECONDARY, wraplength=1200, justify="left").pack(side="bottom", fill="x",
@@ -1212,6 +1219,7 @@ class DividendTab(ttk.Frame):
             item[3] += v.value_jpy or 0.0
             item[4] = v.quote.close if v.quote else None
         rows, months, total, total_cost, total_value = [], {}, 0.0, 0.0, 0.0
+        self.instrument_of = {}
         for n, (instrument, quantity, cost, value, close) in enumerate(merged.values()):
             info = self.cache.get(instrument.code)
             schedule = info.schedule(today) if info else []
@@ -1238,6 +1246,7 @@ class DividendTab(ttk.Frame):
             keys = (instrument.code, instrument.name, quantity, per_share, expected, yield_pct, yield_cost,
                     upcoming.ex_date if upcoming else None, upcoming.last_cum_date if upcoming else None, pay)
             rows.append((f"d{n}", display, keys, ()))
+            self.instrument_of[f"d{n}"] = instrument.id
             for s in schedule:
                 month = s.ex_date[:7]
                 entry = months.setdefault(month, [0.0, []])
@@ -1291,6 +1300,13 @@ class HeatmapTab(ttk.Frame):
         ttk.Label(bar, textvariable=self.note_var, foreground=TEXT_SECONDARY).pack(side="left", padx=(8, 0))
         self.canvas = TreemapCanvas(self, on_open=self._open)
         self.canvas.pack(side="top", fill="both", expand=True, padx=4, pady=(0, 4))
+        self.canvas.bind("<Button-3>", self._on_right_click)
+
+    def _on_right_click(self, event):
+        """四角の上なら、その銘柄のメニューを出す(四角の外では何も出さない)。"""
+        item = self.canvas.item_at(event.x, event.y)
+        if item is not None:
+            self.app.popup_menu(self.canvas, event, [item.key.split("|", 1)[0]])
 
     def show(self, valuations: list[Valuation]) -> None:
         self.valuations = valuations
@@ -1716,6 +1732,23 @@ class AssetApp(ttk.Frame):
 
     def set_message(self, text: str) -> None:
         self.message_var.set(text)
+
+    def popup_menu(self, widget, event, instrument_ids: list[str], open_chart=None,
+                   actions: list[MenuAction] = ()) -> None:
+        """商品の右クリックのメニュー(gui_menu.py)を出す。
+
+        チャート・グループ・コードは日本株だけが対象(投資信託などでは、グレーにする)。
+        open_chart を省くと、その商品のチャートを開く(保有の行は、その保有の売買だけを重ねるので渡す)。
+        """
+        stocks = [i for i in instrument_ids
+                  if i in self.store.instruments and self.store.instruments[i].asset_class == AssetClass.JP_STOCK]
+        if not stocks:
+            open_chart, note = None, "(日本株だけ)"
+        else:
+            open_chart = open_chart or (lambda: self.open_chart(stocks[0]))
+            note = NOT_SUPPORTED
+        popup_stock_menu(widget, event, codes=[self.store.instruments[i].code for i in stocks], app_name=APP_NAME,
+                         open_chart=open_chart, chart_note=note, actions=actions, on_message=self.set_message)
 
     # 引数 --tab の名前 -> タブ
     TAB_NAMES = ("holdings", "trades", "realized", "summary", "dividend", "heatmap")

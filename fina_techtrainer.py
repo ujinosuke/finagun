@@ -55,6 +55,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
 from gui_theme import apply_theme
+from gui_menu import bind_tree, popup_stock_menu
 from gui_chart import BUY_COLOR, DOWN_COLOR, SELL_COLOR, UP_COLOR, ChartFrame, TradeMark
 from core_settings import app_title
 from core_gather import BASE_DIR, csv_path_for, load_saved
@@ -765,6 +766,8 @@ class ReportWindow(tk.Toplevel):
         tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         tree.pack(side="left", fill="x", expand=True)
+        # レポートの画面にはチャートを開く機能がないので、「チャートを開く」はグレー
+        bind_tree(tree, lambda e, iid: popup_stock_menu(tree, e, codes=[report.code], app_name="fina_techtrainer"))
         for i, t in enumerate(report.trades, 1):
             tree.insert("", "end", tags=["plus" if t.pnl > 0 else "minus"], values=(
                 i, f"{t.entry_date:%Y-%m-%d}", f"{t.entry_price:,.1f}", f"{t.exit_date:%Y-%m-%d}",
