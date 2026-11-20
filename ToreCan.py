@@ -401,6 +401,14 @@ class DataCard:
             failed = gatherer.failed()
             if failed:
                 text += f"\n失敗した銘柄: {' '.join(failed[:10])}{' ほか' if len(failed) > 10 else ''}"
+                # 失敗の理由(yfinance のエラー)。全銘柄が同じ理由なら、通信の問題(SSL・アクセス制限など)
+                reasons = gatherer.failure_reasons()
+                if reasons:
+                    reason, n = reasons[0]
+                    text += f"\n理由({n:,} 銘柄): {reason}"
+                if len(failed) == len(gatherer.results):
+                    text += ("\nすべての銘柄が取得できませんでした。通信(SSL・プロキシ・アクセス制限)か、"
+                             "yfinance が古い可能性があります(pip install -U yfinance curl_cffi)。")
             self.result_var.set("完了: " + text)
         elif kind == "cancelled":
             self.result_var.set("中止しました(取得済みの銘柄は保存されています)。")

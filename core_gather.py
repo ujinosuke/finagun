@@ -29,6 +29,11 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 
+try:  # 古い yfinance(0.2 系)は、取得できなかった銘柄のエラーを shared._ERRORS に残す
+    import yfinance.shared as yf_shared
+except ImportError:
+    yf_shared = None
+
 from core_settings import APP_DIR, acquire_lock, data_root, release_lock
 
 # BASE_DIR は保存ファイル(asset.json など)を置くプログラムのフォルダ。
@@ -54,8 +59,52 @@ GATHER_LOCK = APP_DIR / "gather.lock"
 # 取得しない市場。PRO Market はプロ投資家向けで個人は通常売買できず、Yahoo にデータがない銘柄も多い
 EXCLUDED_MARKETS = {"PRO Market"}
 
-# 取得できなかった銘柄について yfinance が出すエラー表示を抑える(結果はこのプログラムで表示する)
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+class _ErrorCollector(logging.Handler):
+    """yfinance が出すエラーを、画面に出さずに集める(失敗の理由として結果に出すため)。
+
+    yfinance 1.x は、取得できなかった銘柄を "['7203.T', '6758.T']: 理由" の形でログに出す。
+    通信の失敗は "possibly delisted" としか出ないことがあり、本当の原因は銘柄名のない警告
+    ("Cookie/crumb fetch failed (ConnectionError)" など)に出るので、警告も集める。
+    """
+
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.messages.append(record.getMessage())
+        except Exception:  # noqa: BLE001  ログの組み立てに失敗しても、取得は続ける
+            pass
+
+    def reasons(self, tickers: list[str]) -> dict[str, str]:
+        """集めたエラーから、ティッカー -> 理由 を作る。
+
+        どの銘柄か書いていないエラー・警告(通信の失敗など)は、全銘柄の理由の前に付ける。
+        """
+        found: dict[str, str] = {}
+        general: list[str] = []
+        for message in self.messages:
+            head, sep, reason = message.partition("]: ")
+            if sep and head.lstrip().startswith("["):
+                for ticker in tickers:
+                    if f"'{ticker}'" in head:
+                        found[ticker] = reason
+            elif message.strip() and "Failed download" not in message and not message.lstrip().startswith("$"):
+                # "$7203.T: ..." は 1 銘柄ごとのエラー(同じ内容が上の形でも出る)なので、全銘柄には広げない
+                general.append(message)
+        if general:  # 通信のエラー(SSL など)は銘柄名なしで出ることがある
+            for ticker in tickers:
+                found[ticker] = general[-1] + (f" / {found[ticker]}" if ticker in found else "")
+        return found
+
+
+# 取得できなかった銘柄について yfinance が出すエラー表示を抑え、理由として集める(結果はこのプログラムで表示する)
+_yf_errors = _ErrorCollector()
+_yf_logger = logging.getLogger("yfinance")
+_yf_logger.setLevel(logging.WARNING)
+_yf_logger.propagate = False
+_yf_logger.addHandler(_yf_errors)
 
 
 def latest_listed_stocks_csv() -> Path:
@@ -121,22 +170,38 @@ def clean(raw: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def download(codes: list[str], start: str) -> dict[str, pd.DataFrame]:
+def short_reason(message: object) -> str:
+    """yfinance のエラーを、画面に出せる長さの 1 行にする。"""
+    text = " ".join(str(message).split())
+    return text if len(text) <= 120 else text[:117] + "..."
+
+
+def download(codes: list[str], start: str) -> tuple[dict[str, pd.DataFrame], dict[str, str]]:
     """複数の銘柄の start 以降の日足を、まとめて取得する。取得できない銘柄は空の DataFrame。
+
+    戻り値は (コード -> 日足, コード -> 取得できなかった理由)。理由は yfinance が記録したエラーで、
+    通信の失敗(SSL・アクセス制限など)を見分けるのに使う(エラー表示は抑えているため)。
 
     auto_adjust=False にして、配当で過去の値が変わらない株価を使う
     (株式分割は Yahoo 側で過去分も調整される)。
     """
     tickers = [f"{code}.T" for code in codes]
+    _yf_errors.messages.clear()
     raw = yf.download(
         tickers, start=start, auto_adjust=False, actions=False,
         group_by="ticker", progress=False, threads=True,
     )
+    # 取得できなかった銘柄の理由。新しい yfinance はログから、古い yfinance は shared._ERRORS から
+    errors = _yf_errors.reasons(tickers)
+    if yf_shared is not None:
+        errors.update(getattr(yf_shared, "_ERRORS", None) or {})
+    reasons = {code: short_reason(errors[ticker]) for code, ticker in zip(codes, tickers) if ticker in errors}
     available = set(raw.columns.get_level_values(0)) if not raw.empty else set()
-    return {
+    frames = {
         code: clean(raw[ticker]) if ticker in available else pd.DataFrame(columns=COLUMNS)
         for code, ticker in zip(codes, tickers)
     }
+    return frames, reasons
 
 
 def same_prices(a: pd.Series, b: pd.Series) -> bool:
@@ -167,6 +232,7 @@ class Gatherer:
     def __init__(self, on_progress: Callable[[int, int], None] | None = None,
                  cancel: threading.Event | None = None, total: int = 0):
         self.results: dict[str, str] = {}  # コード -> 結果のメッセージ
+        self.reasons: dict[str, str] = {}  # コード -> 取得できなかった理由(yfinance のエラー。あるときだけ)
         self.requests = 0
         self.on_progress = on_progress
         self.cancel = cancel
@@ -181,14 +247,23 @@ class Gatherer:
         if self.requests:
             time.sleep(BATCH_INTERVAL)
         self.requests += 1
-        return download(codes, start)
+        frames, reasons = download(codes, start)
+        for code in codes:  # 取り直した銘柄の古い理由は消す
+            self.reasons.pop(code, None)
+        self.reasons.update(reasons)
+        return frames
+
+    def _fail(self, code: str, message: str) -> None:
+        """取得の失敗を記録する。yfinance のエラーがあれば、理由として添える。"""
+        reason = self.reasons.get(code)
+        self.results[code] = f"[失敗] {message}" + (f"({reason})" if reason else "")
 
     def fetch_full(self, codes: list[str], reason: str = "新規") -> None:
         """全期間を取得して、ファイルを作る(上書きする)。"""
         for batch in in_batches(codes):
             for code, df in self._download(batch, START_DATE).items():
                 if df.empty:
-                    self.results[code] = "[失敗] データを取得できません"
+                    self._fail(code, "データを取得できません")
                     continue
                 df.to_csv(csv_path_for(code))
                 self.results[code] = (
@@ -209,7 +284,7 @@ class Gatherer:
                 # 保存済みの最終日から取得し、その日の値が一致するか確かめる
                 for code, new in self._download(batch, f"{last_date:%Y-%m-%d}").items():
                     if new.empty or last_date not in new.index:
-                        self.results[code] = "[失敗] 更新データを取得できません"
+                        self._fail(code, "更新データを取得できません")
                     elif not same_prices(last_rows[code], new.loc[last_date]):
                         # 株式分割などで過去の値が変わったので、後で全期間を取り直す
                         refetch.append(code)
@@ -233,6 +308,11 @@ class Gatherer:
 
     def failed(self) -> list[str]:
         return [code for code, message in self.results.items() if message.startswith("[失敗]")]
+
+    def failure_reasons(self) -> list[tuple[str, int]]:
+        """失敗した銘柄の理由と銘柄数を、多い順に返す(理由のわかった銘柄だけ)。"""
+        counts = Counter(self.reasons[code] for code in self.failed() if code in self.reasons)
+        return counts.most_common()
 
 
 def gather(codes: list[str], on_progress: Callable[[int, int], None] | None = None,
@@ -359,6 +439,8 @@ def main() -> int:
     failed = gatherer.failed()
     if failed:
         print("失敗した銘柄: " + " ".join(failed))
+        for reason, n in gatherer.failure_reasons()[:3]:
+            print(f"  理由({n} 銘柄): {reason}")
     return 1 if failed else 0
 
 
