@@ -71,6 +71,7 @@ from core_gather import csv_path_for
 from core_stocks import load_listed, normalize, stock_index
 from core_watchlist import watched_codes
 from gui_chart import ChartFrame, TradeMark  # gui_chart を読み込むと、matplotlib の日本語フォントも設定される
+from gui_help import attach_headings
 from gui_menu import NOT_SUPPORTED, MenuAction, bind_tree, popup_stock_menu
 from gui_treemap import TreemapCanvas, TreemapItem
 from gui_widgets import SortableTree, StockSearchBox, add_to_watchlist
@@ -249,6 +250,7 @@ class HoldingsTab(ttk.Frame):
         tree.bind("<Double-Button-1>", lambda e: tree.identify_row(e.y) and self.open_chart())
         tree.bind("<Return>", lambda e: self.open_chart())
         bind_tree(tree, self._on_right_click)
+        attach_headings(tree, HOLDING_TERMS)
 
     def show(self, valuations: list[Valuation]) -> None:
         self.targets = {}
@@ -363,6 +365,13 @@ class HoldingsTab(ttk.Frame):
         self.app.open_trade_dialog(preset=preset)
 
 
+# 保有一覧の列 -> 用語の説明のキー(core_glossary.py。見出しにマウスを乗せると説明が出る)
+HOLDING_TERMS = {
+    "account": "account", "average": "average_price", "change": "change", "value": "market_value",
+    "unrealized": "unrealized", "unrealized_pct": "unrealized_pct",
+}
+
+
 # ---- タブ: 取引履歴 ----
 
 class TradesTab(ttk.Frame):
@@ -396,6 +405,7 @@ class TradesTab(ttk.Frame):
         bind_tree(tree, lambda e, iid: self.app.popup_menu(
             tree, e, [self.app.store.trade(int(iid)).instrument_id],
             actions=[MenuAction("取引を編集", self.edit), MenuAction("取引を削除", self.delete)]))
+        attach_headings(tree, {"account": "account", "amount": "settlement_amount"})
 
     def show(self, trades: list[Trade]) -> None:
         self.trades = trades
@@ -489,6 +499,7 @@ class RealizedTab(ttk.Frame):
         self.instrument_of: dict[str, str] = {}  # 行 -> 商品 ID(右クリックのメニュー用。2 つの一覧で共通)
         for table in (self.list, self.by_stock):
             bind_tree(table.tree, lambda e, iid, t=table.tree: self.app.popup_menu(t, e, [self.instrument_of[iid]]))
+            attach_headings(table.tree, {"account": "account", "cost": "cost", "profit": "realized"})
 
     def show(self, realized) -> None:
         self.realized = realized
@@ -1121,6 +1132,12 @@ class DividendTab(ttk.Frame):
         panes.add(self.months, weight=2)
         self.instrument_of: dict[str, str] = {}  # 銘柄の一覧の行 -> 商品 ID(右クリックのメニュー用)
         bind_tree(self.list.tree, lambda e, iid: self.app.popup_menu(self.list.tree, e, [self.instrument_of[iid]]))
+        attach_headings(self.list.tree, {
+            "per_share": "per_share_dividend", "yield": "dividend_yield", "yield_cost": "yield_on_cost",
+            "ex_date": "ex_dividend", "last_cum": "last_cum_date",
+        })
+        bind_tree(self.months.tree, None)  # 月ごとの表は銘柄の行でないので、見出しの用語だけ
+        attach_headings(self.months.tree, {"month": "ex_dividend"})
         ttk.Label(self, text="※ 配当は yfinance の情報による参考表示です(税引前)。今後の配当は、発表済みの次回分のほかは"
                              "去年の同じ時期の配当から推定しています(推定)。権利付最終日は土日だけを除いた目安です。",
                   foreground=TEXT_SECONDARY, wraplength=1200, justify="left").pack(side="bottom", fill="x",

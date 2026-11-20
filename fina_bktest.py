@@ -54,6 +54,7 @@ from core_settings import app_title
 from core_gather import START_DATE, csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from core_strategies import FILL_CLOSE, FILL_MODES, Exit, Strategy, Trade, all_strategies
+from gui_help import attach as attach_help, attach_headings
 from gui_menu import SHOWING, MenuAction, bind_tree, popup_stock_menu
 from gui_widgets import StockSearchBox
 
@@ -259,7 +260,9 @@ class BacktestFrame(ttk.Frame):
         ttk.Entry(bar, textvariable=self.end_var, width=11).pack(side="left")
         ttk.Label(bar, text="(YYYY-MM-DD)", foreground="#777777").pack(side="left", padx=(4, 0))
 
-        ttk.Label(bar, text="約定").pack(side="left", padx=(16, 0))
+        label = ttk.Label(bar, text="約定")
+        label.pack(side="left", padx=(16, 0))
+        attach_help(label, "fill")
         self.fill_var = tk.StringVar(value=FILL_CLOSE)
         for fill, label in FILL_MODES.items():
             ttk.Radiobutton(bar, text=label, value=fill, variable=self.fill_var).pack(side="left", padx=(4, 0))
@@ -317,6 +320,13 @@ class BacktestFrame(ttk.Frame):
         self.screening.stop()
 
 
+# 列 -> 用語の説明のキー(core_glossary.py。見出しにマウスを乗せると説明が出る。順位の表・売買の一覧で共通)
+COLUMN_TERMS = {
+    "win_rate": "win_rate", "average": "average_return", "total": "total_return", "drawdown": "max_dd",
+    "held": "bars_held", "take_profit": "take_profit", "stop_loss": "stop_loss",
+}
+
+
 def make_table(parent, columns: dict, height: int) -> ttk.Treeview:
     """見出し付きの表と縦のスクロールバーを parent に置く。"""
     frame = ttk.Frame(parent)
@@ -331,6 +341,7 @@ def make_table(parent, columns: dict, height: int) -> ttk.Treeview:
     tree.pack(side="left", fill="both", expand=True)
     tree.tag_configure("plus", foreground="#1b7f5f")
     tree.tag_configure("minus", foreground="#c62828")
+    attach_headings(tree, COLUMN_TERMS)
     return tree
 
 

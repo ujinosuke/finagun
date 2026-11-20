@@ -15,6 +15,7 @@ from tkinter import messagebox, ttk
 
 from core_condition import CONDITION_TYPES
 from core_strategies import ConditionRow
+from gui_help import attach as attach_help
 from gui_theme import PAD
 
 
@@ -37,14 +38,16 @@ def ask_condition_row(parent, title: str, row: ConditionRow | None = None,
     ttk.Label(frame, text="コンディション").grid(row=0, column=0, sticky="w", pady=(0, 4))
     kind_box = ttk.Combobox(frame, textvariable=kind_var, values=list(CONDITION_TYPES), state="readonly", width=22)
     kind_box.grid(row=0, column=1, columnspan=2, sticky="w", pady=(0, 4))
+    attach_help(kind_box, lambda: CONDITION_TYPES[kind_var.get()].term)
     ttk.Label(frame, text="状態").grid(row=1, column=0, sticky="w", pady=(0, 4))
     state_box = ttk.Combobox(frame, textvariable=state_var, state="readonly", width=22)
     state_box.grid(row=1, column=1, columnspan=2, sticky="w", pady=(0, 4))
     params_frame = ttk.Frame(frame)
     params_frame.grid(row=2, column=0, columnspan=3, sticky="w", pady=(PAD, 0))
     if allow_exclude:
-        ttk.Checkbutton(frame, text="除外にする(成り立ったら見送る)", variable=exclude_var).grid(
-            row=3, column=0, columnspan=3, sticky="w", pady=(PAD, 0))
+        check = ttk.Checkbutton(frame, text="除外にする(成り立ったら見送る)", variable=exclude_var)
+        check.grid(row=3, column=0, columnspan=3, sticky="w", pady=(PAD, 0))
+        attach_help(check, "exclude")
 
     def show_kind(start: ConditionRow | None = None):
         """選んだ種類の状態とパラメータの欄を作る。start があれば、その値を入れる。"""
@@ -113,7 +116,10 @@ class ConditionSetEditor(ttk.Frame):
         self.enabled = True
         self.buttons: list[ttk.Widget] = []  # 実行中に押せなくする部品
 
-        self.signal_box = ttk.LabelFrame(self, text="シグナル(どれか 1 つが点灯したら候補)", padding=(PAD, 4))
+        # 枠の見出しにマウスを乗せると、用語の説明を出す(枠全体に付けると、中のボタンの上でも出てしまう)
+        label = ttk.Label(self, text="シグナル(どれか 1 つが点灯したら候補)")
+        attach_help(label, "signal")
+        self.signal_box = ttk.LabelFrame(self, labelwidget=label, padding=(PAD, 4))
         self.signal_box.pack(side="top", fill="x")
         self.signal_rows = ttk.Frame(self.signal_box)
         self.signal_rows.pack(side="top", fill="x")
@@ -121,7 +127,9 @@ class ConditionSetEditor(ttk.Frame):
         add.pack(side="top", anchor="w", pady=(4, 0))
         self.buttons.append(add)
 
-        self.filter_box = ttk.LabelFrame(self, text="フィルター(すべて満たす。除外は成り立ったら見送る)", padding=(PAD, 4))
+        label = ttk.Label(self, text="フィルター(すべて満たす。除外は成り立ったら見送る)")
+        attach_help(label, "filter")
+        self.filter_box = ttk.LabelFrame(self, labelwidget=label, padding=(PAD, 4))
         self.filter_box.pack(side="top", fill="x", pady=(PAD, 0))
         self.filter_rows = ttk.Frame(self.filter_box)
         self.filter_rows.pack(side="top", fill="x")
@@ -185,8 +193,12 @@ class ConditionSetEditor(ttk.Frame):
                            command=lambda f=is_filter, i=n: self._edit(f, i)).pack(side="right", padx=(4, 2))
                 if is_filter:
                     var = tk.BooleanVar(value=row.exclude)
-                    ttk.Checkbutton(line, text="除外", variable=var, state=state,
-                                    command=lambda i=n, v=var: self._toggle_exclude(i, v)).pack(side="right")
+                    check = ttk.Checkbutton(line, text="除外", variable=var, state=state,
+                                            command=lambda i=n, v=var: self._toggle_exclude(i, v))
+                    check.pack(side="right")
+                    attach_help(check, "exclude")
                 text = ("除外: " if row.exclude else "") + row.label
-                ttk.Label(line, text=text, wraplength=self.wraplength, justify="left",
-                          style="Warning.TLabel" if row.exclude else "TLabel").pack(side="left", anchor="w")
+                label = ttk.Label(line, text=text, wraplength=self.wraplength, justify="left",
+                                  style="Warning.TLabel" if row.exclude else "TLabel")
+                label.pack(side="left", anchor="w")
+                attach_help(label, CONDITION_TYPES[row.condition].term)  # その行のコンディションの説明

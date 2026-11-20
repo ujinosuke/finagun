@@ -61,6 +61,7 @@ class Settings:
     # 銘柄ごとのファイル(charts/)がない銘柄はこの表示で開く。値を確かめるのは gui_chart.chart_defaults
     chart_defaults: dict = field(default_factory=dict)
     draw_color: str = ""            # チャートで図形を描く色(全銘柄で 1 つ)。空なら gui_chart の最初の色
+    help_tooltips: bool = True      # 投資用語にマウスを乗せたとき、説明の吹き出しを出すか(gui_help.py)
 
 
 CHART_DEFAULT_KEYS = {  # chart_defaults の項目 -> 値の型
@@ -88,6 +89,9 @@ def parse_settings(data) -> Settings:
                 if isinstance(value, dict):
                     values[f.name] = {k: v for k, v in value.items()
                                       if k in CHART_DEFAULT_KEYS and type(v) is CHART_DEFAULT_KEYS[k]}
+            elif isinstance(f.default, bool):
+                if isinstance(value, bool):
+                    values[f.name] = value
             elif isinstance(value, str):
                 values[f.name] = value.strip()
     return Settings(**values)

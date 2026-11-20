@@ -25,6 +25,8 @@ class Oscillator(Indicator):
     levels: tuple[float, ...] = ()
     # 線ではなく棒で描く列(例: MACD のヒストグラム)。0 より上は上昇の色、下は下落の色
     histograms: tuple[str, ...] = ()
+    # 用語の説明のキー(core_glossary.py)。なければ ""
+    term: str = ""
 
 
 class RSI(Oscillator):
@@ -37,6 +39,7 @@ class RSI(Oscillator):
     """
 
     name = "RSI"
+    term = "rsi"
     PERIOD = 14
     MA_PERIOD = 14
     lines = {
@@ -64,6 +67,7 @@ class MACD(Oscillator):
     """
 
     name = "MACD"
+    term = "macd"
     FAST, SLOW, SIGNAL = 12, 26, 9
     lines = {
         "MACD_Hist": LineStyle("Hist", "#9e9e9e", 1.0),
@@ -86,6 +90,7 @@ class ATR(Oscillator):
     """
 
     name = "ATR"
+    term = "atr"
     PERIOD = 14
     lines = {"ATR14": LineStyle("ATR 14", "#d81b60", 1.0)}
 

@@ -72,6 +72,7 @@ from core_gather import csv_path_for, load_saved
 from core_chartstore import chart_mtime, delete_chart, load_chart, save_chart
 from core_settings import app_title, load_settings, market_colors, update_settings
 from core_stocks import load_listed, load_stock_names, stock_index
+from gui_help import attach as attach_help
 from gui_menu import SHOWING, MenuAction, popup_stock_menu
 from gui_widgets import StockSearchBox
 from core_indicators import BollingerBands, Indicator, SMAEssential4, VolumeMA
@@ -316,14 +317,18 @@ class ChartFrame(ttk.Frame):
 
         # 価格チャートに重ねるもの
         self.bollinger_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bar, text="ボリンジャー", variable=self.bollinger_var,
-                        command=lambda: self._on_display_changed("bollinger")).pack(side="left")
+        check = ttk.Checkbutton(bar, text="ボリンジャー", variable=self.bollinger_var,
+                                command=lambda: self._on_display_changed("bollinger"))
+        check.pack(side="left")
+        attach_help(check, "bollinger")
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
 
         # 下段の表示・非表示
         self.volume_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(bar, text="出来高", variable=self.volume_var,
-                        command=lambda: self._on_display_changed("volume")).pack(side="left")
+        check = ttk.Checkbutton(bar, text="出来高", variable=self.volume_var,
+                                command=lambda: self._on_display_changed("volume"))
+        check.pack(side="left")
+        attach_help(check, "volume")
         self.oscillator_on_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             bar, text="オシレーター", variable=self.oscillator_on_var,
@@ -335,6 +340,7 @@ class ChartFrame(ttk.Frame):
         )
         self.oscillator_box.pack(side="left")
         self.oscillator_box.bind("<<ComboboxSelected>>", lambda e: self._on_display_changed("oscillator"))
+        attach_help(self.oscillator_box, lambda: getattr(OSCILLATORS.get(self.oscillator_var.get()), "term", None))
         self.condition_on_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             bar, text="コンディション", variable=self.condition_on_var,
@@ -346,6 +352,7 @@ class ChartFrame(ttk.Frame):
         )
         self.condition_box.pack(side="left")
         self.condition_box.bind("<<ComboboxSelected>>", lambda e: self._on_display_changed("condition"))
+        attach_help(self.condition_box, lambda: getattr(CONDITIONS.get(self.condition_var.get()), "term", None))
 
         # 2 段目: 図形
         bar = ttk.Frame(self)

@@ -51,6 +51,7 @@ from core_settings import (
     market_colors, profit_colors, release_lock, update_settings,
 )
 from gui_chart import CONDITIONS, OSCILLATORS, TIMEFRAMES, chart_defaults
+from gui_help import attach as attach_help
 from gui_icons import icon
 from gui_theme import (
     ACCENT, ACCENT_LIGHT, BACKGROUND, BORDER, CARD, PAD, PAD2, TEXT, TEXT_MUTED, WARNING, apply_theme, fonts,
@@ -675,6 +676,7 @@ class SettingsDialog(tk.Toplevel):
             (k for k, v in self.bench_names.items() if v == settings.benchmark), next(iter(self.bench_names))))
         self.period_var = tk.StringVar(value=settings.corr_period)
         self.dir_var = tk.StringVar(value=settings.data_dir)
+        self.help_var = tk.BooleanVar(value=settings.help_tooltips)
         self.check_var = tk.StringVar()
 
         self.notebook = ttk.Notebook(self)
@@ -712,6 +714,12 @@ class SettingsDialog(tk.Toplevel):
             ttk.Radiobutton(line, text=name, value=name, variable=self.period_var).pack(side="left", padx=(0, PAD))
         row += 1
         row = self._build_chart_defaults(form, row)
+        ttk.Label(form, text="用語の説明").grid(row=row, column=0, sticky="w", padx=(0, PAD2), pady=(PAD2, 4))
+        line = ttk.Frame(form)
+        line.grid(row=row, column=1, sticky="w", pady=(PAD2, 4))
+        ttk.Checkbutton(line, text="投資用語にマウスを乗せたら、説明を出す", variable=self.help_var).pack(side="left")
+        ttk.Label(line, text="  右クリックの「Google で調べる」は、いつでも使えます", style="Muted.TLabel").pack(side="left")
+        row += 1
         ttk.Label(form, text="データフォルダ").grid(row=row, column=0, sticky="w", padx=(0, PAD2), pady=(PAD2, 4))
         line = ttk.Frame(form)
         line.grid(row=row, column=1, sticky="w", pady=(PAD2, 4))
@@ -759,17 +767,23 @@ class SettingsDialog(tk.Toplevel):
         line.pack(side="top", anchor="w")
         for name in TIMEFRAMES:
             ttk.Radiobutton(line, text=name, value=name, variable=v["timeframe"]).pack(side="left", padx=(0, PAD))
-        ttk.Checkbutton(line, text="ボリンジャー", variable=v["bollinger"]).pack(side="left", padx=(PAD, 0))
-        ttk.Checkbutton(line, text="出来高", variable=v["volume"]).pack(side="left", padx=(PAD, PAD))
+        check = ttk.Checkbutton(line, text="ボリンジャー", variable=v["bollinger"])
+        check.pack(side="left", padx=(PAD, 0))
+        attach_help(check, "bollinger")
+        check = ttk.Checkbutton(line, text="出来高", variable=v["volume"])
+        check.pack(side="left", padx=(PAD, PAD))
+        attach_help(check, "volume")
         ttk.Checkbutton(line, text="十字線", variable=v["crosshair"]).pack(side="left")
         line = ttk.Frame(box)
         line.pack(side="top", anchor="w", pady=(4, 0))
         ttk.Checkbutton(line, text="オシレーター", variable=v["oscillator_on"]).pack(side="left")
-        ttk.Combobox(line, textvariable=v["oscillator"], values=list(OSCILLATORS), state="readonly", width=8).pack(
-            side="left", padx=(4, PAD2))
+        box = ttk.Combobox(line, textvariable=v["oscillator"], values=list(OSCILLATORS), state="readonly", width=8)
+        box.pack(side="left", padx=(4, PAD2))
+        attach_help(box, lambda: getattr(OSCILLATORS.get(v["oscillator"].get()), "term", None))
         ttk.Checkbutton(line, text="コンディション", variable=v["condition_on"]).pack(side="left")
-        ttk.Combobox(line, textvariable=v["condition"], values=list(CONDITIONS), state="readonly", width=24).pack(
-            side="left", padx=(4, 0))
+        box = ttk.Combobox(line, textvariable=v["condition"], values=list(CONDITIONS), state="readonly", width=24)
+        box.pack(side="left", padx=(4, 0))
+        attach_help(box, lambda: getattr(CONDITIONS.get(v["condition"].get()), "term", None))
         ttk.Label(box, text="図形や表示を保存していない銘柄は、この表示で開きます"
                             "(チャートの「この表示を既定にする」ボタンでも変えられます)。",
                   style="Muted.TLabel").pack(side="top", anchor="w", pady=(4, 0))
@@ -866,6 +880,7 @@ class SettingsDialog(tk.Toplevel):
             self.bench_var.set(next(k for k, v in self.bench_names.items() if v == defaults.benchmark))
             self.period_var.set(defaults.corr_period)
             self.dir_var.set(defaults.data_dir)
+            self.help_var.set(defaults.help_tooltips)
             for key, value in chart_defaults().items():
                 self.chart_vars[key].set(value)
             self._draw_sample()
@@ -911,7 +926,7 @@ class SettingsDialog(tk.Toplevel):
         try:
             update_settings(color_scheme=self.color_var.get(), benchmark=self.bench_names[self.bench_var.get()],
                             corr_period=self.period_var.get(), data_dir=data_dir,
-                            chart_defaults=self._chart_defaults_now())
+                            chart_defaults=self._chart_defaults_now(), help_tooltips=self.help_var.get())
         except OSError as e:
             messagebox.showerror(APP_NAME, f"settings.json に保存できません。\n{e}", parent=self)
             return

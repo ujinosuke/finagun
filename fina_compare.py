@@ -102,6 +102,7 @@ from core_watchlist import (
 )
 from gui_chart import ChartFrame  # gui_chart を読み込むと、matplotlib の日本語フォントも設定される
 from gui_corrmatrix import CorrMatrix, MatrixLabel, correlation_color
+from gui_help import attach as attach_help, attach_headings
 from gui_menu import MenuAction, bind_tree, popup_stock_menu
 from gui_widgets import SortableTree, StockSearchBox
 
@@ -177,6 +178,17 @@ COLUMN_GROUPS = {
     "holding": ("保有", list(HOLDING_COLUMNS)),  # 保有資産のグループのときだけ
 }
 DEFAULT_GROUPS = ["valuation", "returns", "trend", "holding"]  # 「値動き」は最初は隠す
+# 列 -> 用語の説明のキー(core_glossary.py。見出しにマウスを乗せると説明が出る)
+COLUMN_TERMS = {
+    "market_cap": "market_cap", "ev_rev": "ev_rev", "ev_ebitda": "ev_ebitda", "per": "per",
+    "forward_per": "forward_per", "pbr": "pbr", "psr": "psr", "dividend_yield": "dividend_yield",
+    "ret_1m": "returns", "ret_3m": "returns", "ret_6m": "returns", "ret_1y": "returns",
+    "high52": "high52", "low52": "low52", "dev25": "deviation", "dev75": "deviation", "dev200": "deviation",
+    "rsi14": "rsi", "vol20": "volatility", "vol60": "volatility", "atr14": "atr", "beta": "beta",
+    "turnover20": "turnover", "hold_value": "market_value", "hold_weight": "weight",
+    "hold_unrealized": "unrealized_pct",
+}
+COLUMN_GROUP_TERMS = {"valuation": "valuation", "returns": "returns", "trend": "trend", "motion": "motion"}
 COLUMNS |= HOLDING_COLUMNS  # 表の列には常に持ち、表示するかは表示する列(displaycolumns)で決める
 HOLDINGS_GROUP = RESERVED_NAMES[0]  # 固定のグループの名前「保有資産」(保存しない)
 HOLDINGS_LABEL = "保有資産(自動)"   # グループの欄での表示
@@ -1085,6 +1097,8 @@ class TableView(ttk.Frame):
         for name, (label, _columns) in COLUMN_GROUPS.items():
             var = tk.BooleanVar(value=name in app.settings["column_groups"])
             check = ttk.Checkbutton(bar, text=label, variable=var, command=self._on_groups_changed)
+            if name in COLUMN_GROUP_TERMS:
+                attach_help(check, COLUMN_GROUP_TERMS[name])
             check.pack(side="left", padx=(6, 0))
             self.group_vars[name] = var
             self.group_checks[name] = check
@@ -1129,6 +1143,7 @@ class TableView(ttk.Frame):
         self.tree.bind("<Double-Button-1>", self._on_double_click)
         self.tree.bind("<Return>", lambda e: app.open_chart(self.tree.focus()))
         bind_tree(self.tree, self._on_right_click)
+        attach_headings(self.tree, COLUMN_TERMS)
 
     # ---- 列のグループ ----
 
@@ -1363,7 +1378,9 @@ class CorrelationView(ttk.Frame):
         for name in CORRELATION_PERIODS:
             ttk.Radiobutton(bar, text=name, value=name, variable=self.period_var, command=self._on_period).pack(
                 side="left", padx=(4, 0))
-        ttk.Label(bar, text="ベンチマーク").pack(side="left", padx=(20, 4))
+        bench_label = ttk.Label(bar, text="ベンチマーク")
+        bench_label.pack(side="left", padx=(20, 4))
+        attach_help(bench_label, "benchmark")
         self.bench_names = BENCHMARK_CHOICES  # 先頭に「なし」
         self.bench_var = tk.StringVar(value=benchmark_label(app.benchmark))
         box = ttk.Combobox(bar, textvariable=self.bench_var, values=list(self.bench_names), state="readonly", width=24)
@@ -1431,8 +1448,10 @@ class FinancialsView(ttk.Frame):
         bar.pack(side="top", fill="x", padx=2, pady=(4, 4))
         self.mode_var = tk.StringVar(value=app.settings["fin_mode"])
         for value, text in FIN_MODES.items():
-            ttk.Radiobutton(bar, text=text, value=value, variable=self.mode_var, command=self._on_change).pack(
-                side="left", padx=(0, 6))
+            radio = ttk.Radiobutton(bar, text=text, value=value, variable=self.mode_var, command=self._on_change)
+            radio.pack(side="left", padx=(0, 6))
+            if value == "line":  # 折れ線は指数化して出す
+                attach_help(radio, "indexed")
         ttk.Label(bar, text="項目").pack(side="left", padx=(14, 4))
         self.item_names = {name: key for key, name in ITEMS.items()}
         self.item_var = tk.StringVar(value=ITEMS[app.settings["fin_item"]])
@@ -1440,12 +1459,15 @@ class FinancialsView(ttk.Frame):
                                 width=10)
         item_box.pack(side="left")
         item_box.bind("<<ComboboxSelected>>", lambda e: self._on_change())
+        attach_help(item_box, lambda: self.item_names.get(self.item_var.get()))  # 項目のキーは用語のキーと同じ
         self.table_label = ttk.Label(bar, text="表示")
         self.table_names = {name: key for key, name in FIN_TABLES.items()}
         self.table_var = tk.StringVar(value=FIN_TABLES[app.settings["fin_table"]])
         self.table_box = ttk.Combobox(bar, textvariable=self.table_var, values=list(self.table_names),
                                       state="readonly", width=10)
         self.table_box.bind("<<ComboboxSelected>>", lambda e: self._on_change())
+        attach_help(self.table_box, lambda: {"growth": "yoy", "margin": "operating_margin"}.get(
+            self.table_names.get(self.table_var.get(), "")))
         ttk.Button(bar, text="業績を取り直す", command=lambda: app.ensure_financials(force=True)).pack(side="right")
 
         self.note_var = tk.StringVar()
@@ -1678,6 +1700,7 @@ class FinancialsView(ttk.Frame):
         self.table = SortableTree(self.body, columns, stretch="name", height=12)
         self.table.pack(fill="both", expand=True)
         bind_tree(self.table.tree, lambda e, iid, t=self.table.tree: self.app.popup_menu(t, e, [iid]))
+        attach_headings(self.table.tree, {"yoy": "yoy", "cagr": "cagr"})
         rows = []
         for code in self.app.codes:
             financials = self.app.financials.get(code)

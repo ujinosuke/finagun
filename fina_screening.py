@@ -64,6 +64,7 @@ from core_watchlist import WATCHLIST_PATH, add_codes
 from gui_chart import ChartFrame
 from gui_conditionset import ConditionSetEditor
 from gui_theme import PAD, apply_theme
+from gui_help import attach as attach_help, attach_headings
 from gui_menu import bind_tree, popup_stock_menu
 from gui_widgets import add_to_watchlist, ask_watchlist_group
 
@@ -253,7 +254,9 @@ class ScreeningFrame(ttk.Frame):
 
         options = ttk.Frame(parent)
         options.pack(side="top", fill="x", pady=(PAD, 0))
-        ttk.Label(options, text="シグナルの新鮮さ: 直近").pack(side="left")
+        label = ttk.Label(options, text="シグナルの新鮮さ: 直近")
+        label.pack(side="left")
+        attach_help(label, "freshness")
         self.freshness_var = tk.IntVar(value=DEFAULT_FRESHNESS)
         self.freshness_box = ttk.Spinbox(options, from_=1, to=MAX_FRESHNESS, textvariable=self.freshness_var, width=5)
         self.freshness_box.pack(side="left", padx=4)
@@ -396,6 +399,7 @@ class ScreeningFrame(ttk.Frame):
         bind_tree(self.tree, lambda e, code: popup_stock_menu(
             self.tree, e, codes=[code], app_name="fina_screening", open_chart=self.open_chart,
             on_message=self.status_var.set))
+        attach_headings(self.tree, {"signal": "signal", "signal_date": "freshness", "change": "change"})
 
     # ---- スクリーニングの実行 ----
 

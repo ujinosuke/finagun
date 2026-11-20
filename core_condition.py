@@ -65,6 +65,8 @@ class Condition(ABC):
     params: tuple[Param, ...] = ()
     # パラメータを持つとき、name の「(」より前の部分
     base_name: str = ""
+    # 用語の説明のキー(core_glossary.py。画面でマウスを乗せると説明が出る)。なければ ""
+    term: str = ""
 
     @classmethod
     def key(cls) -> str:
@@ -134,6 +136,7 @@ class RSIDivergence(Condition):
     """
 
     name = "RSIダイバージェンス"
+    term = "rsi_divergence"
     states = {
         "bullish": StateStyle("強気", "#26a69a"),
         "bearish": StateStyle("弱気", "#ef5350"),
@@ -225,6 +228,7 @@ class SMACross(Condition):
     """
 
     base_name = "SMAクロス"
+    term = "sma_cross"
     params = (
         Param("fast", "短期", 5, 2, 400),
         Param("slow", "長期", 25, 3, 400),
@@ -260,6 +264,7 @@ class SMAPerfectOrder(Condition):
     """
 
     base_name = "パーフェクトオーダー"
+    term = "perfect_order"
     params = (
         Param("p1", "期間1", 5, 2, 400),
         Param("p2", "期間2", 25, 3, 400),
@@ -299,6 +304,7 @@ class PriceVsSMA(Condition):
     """
 
     base_name = "終値とSMA"
+    term = "price_vs_sma"
     params = (Param("period", "期間", 25, 2, 400),)
 
     def __init__(self, **values):
