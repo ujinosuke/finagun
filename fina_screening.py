@@ -114,11 +114,11 @@ def judge(code: str) -> Judgement:
             return Judgement(code, error="データがありません")
         daily = daily.dropna()
         hits = []
-        for name, condition_class in CONDITIONS.items():
-            last = condition_class().compute(daily).iloc[-1]
+        for name, condition in CONDITIONS.items():
+            last = condition.compute(daily).iloc[-1]
             hits += [
                 Hit(name, state, str(last.get("note", "")))
-                for state in condition_class.states if last[state]
+                for state in condition.states if last[state]
             ]
         close = daily["Close"]
         change = (close.iloc[-1] / close.iloc[-2] - 1) * 100 if len(close) > 1 else math.nan
@@ -152,8 +152,8 @@ class ScreeningFrame(ttk.Frame):
         panes.add(left, weight=0)
         panes.add(self.chart, weight=1)
         # 一覧の行を、当てはまった状態の色で表示する
-        for name, condition_class in CONDITIONS.items():
-            for state, style in condition_class.states.items():
+        for name, condition in CONDITIONS.items():
+            for state, style in condition.states.items():
                 self.tree.tag_configure(Hit(name, state).tag, foreground=style.color)
 
     # ---- 画面の組み立て ----

@@ -340,7 +340,7 @@ class ChartFrame(ttk.Frame):
         ).pack(side="left", padx=(8, 2))
         self.condition_var = tk.StringVar(value=next(iter(CONDITIONS)))
         self.condition_box = ttk.Combobox(
-            bar, textvariable=self.condition_var, values=list(CONDITIONS), state="readonly", width=16,
+            bar, textvariable=self.condition_var, values=list(CONDITIONS), state="readonly", width=24,
         )
         self.condition_box.pack(side="left")
         self.condition_box.bind("<<ComboboxSelected>>", lambda e: self._on_display_changed("condition"))
@@ -646,7 +646,7 @@ class ChartFrame(ttk.Frame):
         if self.ax_cond is None:
             return
         ax = self.ax_cond
-        condition = CONDITIONS[self.condition_var.get()]()
+        condition = CONDITIONS[self.condition_var.get()]
         result = condition.compute(self.bars)
         self.condition_values = result
 

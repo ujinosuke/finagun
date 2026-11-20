@@ -768,7 +768,7 @@ class SettingsDialog(tk.Toplevel):
         ttk.Combobox(line, textvariable=v["oscillator"], values=list(OSCILLATORS), state="readonly", width=8).pack(
             side="left", padx=(4, PAD2))
         ttk.Checkbutton(line, text="コンディション", variable=v["condition_on"]).pack(side="left")
-        ttk.Combobox(line, textvariable=v["condition"], values=list(CONDITIONS), state="readonly", width=18).pack(
+        ttk.Combobox(line, textvariable=v["condition"], values=list(CONDITIONS), state="readonly", width=24).pack(
             side="left", padx=(4, 0))
         ttk.Label(box, text="図形や表示を保存していない銘柄は、この表示で開きます"
                             "(チャートの「この表示を既定にする」ボタンでも変えられます)。",

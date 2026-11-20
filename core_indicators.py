@@ -34,6 +34,42 @@ class LineStyle:
 
 
 @dataclass(frozen=True)
+class Param:
+    """パラメータ 1 つの仕様(core-condition-design.md「パラメータの持ち方」3)。
+
+    インジケーター・オシレーター・コンディションで共通に使う。この宣言を元に、
+    プリセットの名前・将来の設定ダイアログ・JSON への保存と復元を作る。
+    型は default の型(int なら整数、float なら小数)。
+    """
+    name: str                  # コンストラクタ引数の名前
+    label: str                 # 画面に出す名前
+    default: int | float       # クラスの既定値
+    low: int | float           # 取れる値の範囲(両端を含む)
+    high: int | float
+
+
+def resolve_params(specs: tuple[Param, ...], given: dict) -> dict:
+    """使う側が指定した値を確かめ、指定のない項目はクラスの既定値にして、仕様の順の dict で返す。
+
+    知らない名前・型の違う値・範囲外の値は ValueError にする(黙って既定値にすると、
+    保存した条件と違う判定をしても気づけないため)。
+    """
+    unknown = set(given) - {spec.name for spec in specs}
+    if unknown:
+        raise ValueError(f"知らないパラメータです: {', '.join(sorted(unknown))}")
+    values = {}
+    for spec in specs:
+        value = given.get(spec.name, spec.default)
+        kind = type(spec.default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or (kind is int and not isinstance(value, int)):
+            raise ValueError(f"{spec.label}({spec.name})は{'整数' if kind is int else '数'}で指定してください: {value!r}")
+        if not spec.low <= value <= spec.high:
+            raise ValueError(f"{spec.label}({spec.name})は {spec.low} - {spec.high} で指定してください: {value}")
+        values[spec.name] = kind(value)
+    return values
+
+
+@dataclass(frozen=True)
 class FillStyle:
     """インジケーターの 2 本の線(upper と lower の列)の間の塗り。alpha は透明度(0 で透明)。"""
     upper: str
