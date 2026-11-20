@@ -63,7 +63,10 @@ def correlation_color(value: float | None) -> str:
 
 
 class CorrMatrix(ttk.Frame):
-    """相関マトリクス(スクロールできる Canvas)。セルのダブルクリックで on_open(行のキー, 列のキー) を呼ぶ。"""
+    """相関マトリクス(スクロールできる Canvas)。
+
+    セルのダブルクリックで on_open(行のキー, 列のキー)、見出しの銘柄のダブルクリックで on_open(キー, キー) を呼ぶ。
+    """
 
     def __init__(self, master, on_open: Callable[[str, str], None] | None = None):
         super().__init__(master)
@@ -181,7 +184,24 @@ class CorrMatrix(ttk.Frame):
                                            tags="tooltip")
         self.canvas.tag_raise(label, box)
 
+    def _header_at(self, event) -> MatrixLabel | None:
+        """マウスの下にある見出し(左の行の見出し・上の列の見出し)の銘柄。見出しの外なら None。"""
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        n = len(self.labels)
+        if 0 <= x < ROW_HEADER and y >= COLUMN_HEADER:  # 行の見出し
+            i = int((y - COLUMN_HEADER) // CELL_HEIGHT)
+            return self.labels[i] if i < n else None
+        if 0 <= y < COLUMN_HEADER and x >= ROW_HEADER:  # 列の見出し
+            j = int((x - ROW_HEADER) // CELL_WIDTH)
+            return self.labels[j] if j < n else None
+        return None
+
     def _on_double_click(self, event):
+        """マスなら on_open(行, 列)、見出しの銘柄なら on_open(銘柄, 銘柄)(その 1 銘柄)を呼ぶ。"""
+        if self.on_open is None:
+            return
         cell = self._cell_at(event)
-        if cell is not None and self.on_open is not None:
+        if cell is not None:
             self.on_open(cell[0].key, cell[1].key)
+        elif (label := self._header_at(event)) is not None:
+            self.on_open(label.key, label.key)

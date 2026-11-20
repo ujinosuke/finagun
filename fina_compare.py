@@ -98,7 +98,7 @@ from core_gather import BASE_DIR, csv_path_for, load_saved
 from core_stocks import load_listed, stock_index
 from core_watchlist import (
     WATCHLIST_PATH, RESERVED_NAMES, add_codes, create_group, delete_group, load_groups, merge_groups, name_error,
-    remove_codes, rename_group, watchlist_mtime,
+    move_codes, remove_codes, rename_group, watchlist_mtime,
 )
 from gui_chart import ChartFrame  # gui_chart を読み込むと、matplotlib の日本語フォントも設定される
 from gui_corrmatrix import CorrMatrix, MatrixLabel, correlation_color
@@ -592,7 +592,8 @@ class CompareApp(ttk.Frame):
         for widget in self.search.bar.winfo_children():  # 銘柄の追加欄の「追加」ボタン
             if isinstance(widget, ttk.Button):
                 widget.configure(state="disabled" if holdings else "normal")
-        self.delete_button.configure(state="disabled" if holdings else "normal")
+        for button in (self.delete_button, *self.move_buttons):
+            button.configure(state="disabled" if holdings else "normal")
         self.group_note.set(
             ("資産管理の保有 " + f"{len(self.holding_codes)} 銘柄(評価額の大きい順)。銘柄の追加・削除は資産管理で行います"
              if self.holding_codes else "資産管理で保有を登録すると、ここに出ます")
@@ -717,6 +718,13 @@ class CompareApp(ttk.Frame):
         ttk.Button(bar, text="Excel 出力", command=self.export_excel).pack(side="right", padx=(12, 0))
         self.delete_button = ttk.Button(bar, text="削除", width=5, command=self.remove_selected)
         self.delete_button.pack(side="right")
+        # 登録順の上下(ウォッチリストの「↑」「↓」と同じ)。Alt+↑・Alt+↓ でも動かせる
+        self.move_buttons = [
+            ttk.Button(bar, text="↓", width=3, command=lambda: self.move_selected(1)),
+            ttk.Button(bar, text="↑", width=3, command=lambda: self.move_selected(-1)),
+        ]
+        for button in self.move_buttons:
+            button.pack(side="right", padx=(0, 2))
         self.refresh_button = ttk.Button(bar, text="更新", width=5, command=self.reload)
         self.refresh_button.pack(side="right", padx=(0, 4))
         self.status_var = tk.StringVar()
@@ -766,6 +774,24 @@ class CompareApp(ttk.Frame):
             return
         if self._apply(remove_codes, self.group["name"], removed):
             self.refresh()
+
+    def move_selected(self, step: int) -> None:
+        """比較表で選んでいる銘柄を、登録順の中で上(step=-1)または下(step=1)に 1 つ動かす。
+
+        登録順は watchlist.json に保存する(ウォッチリストの並びも変わる)。
+        見出しで並べ替えているときは、登録順の表示に戻してから動かす。
+        """
+        if self.is_holdings:
+            self.status_var.set("保有資産のグループは、評価額の大きい順に並びます(上下には動かせません)。")
+            return
+        moving = [iid for iid in self.table.tree.selection() if iid in self.codes]
+        if not moving:
+            self.status_var.set("動かす銘柄を、比較表で選んでください。")
+            return
+        self.table.sort_column, self.table.sort_reverse = None, False
+        if self._apply(move_codes, self.group["name"], moving, step):
+            self.refresh()
+            self.table.tree.see(moving[0] if step < 0 else moving[-1])
 
     @property
     def benchmark(self) -> str:
@@ -1087,6 +1113,8 @@ class TableView(ttk.Frame):
         self.tree.bind("<ButtonRelease-1>", lambda e: self._schedule_highlights(), add="+")
 
         self.tree.bind("<Delete>", lambda e: app.remove_selected())
+        self.tree.bind("<Alt-Up>", lambda e: (app.move_selected(-1), "break")[1])  # "break": 選んでいる行を動かさない
+        self.tree.bind("<Alt-Down>", lambda e: (app.move_selected(1), "break")[1])
         self.tree.bind("<Control-c>", lambda e: self.copy())
         self.tree.bind("<Control-a>", lambda e: self.tree.selection_set(app.codes))
         self.tree.bind("<Double-Button-1>", self._on_double_click)
@@ -1324,7 +1352,7 @@ class CorrelationView(ttk.Frame):
         ttk.Label(self, foreground=TEXT_SECONDARY, justify="left", text=(
             "相関: +1 に近い(濃い青)ほど同じ方向に動きやすく、分散が効かない。-1 に近い(濃い赤)ほど逆に動きやすい。"
             "0 付近は無色。\nマスの下の数字は計算に使った日数(期間より少ないと橙色)。日次の終値の前日比リターンで計算し、"
-            "2 銘柄で重なる期間に合わせる。β はベンチマークに対するベータ。マスのダブルクリックで 2 銘柄のチャートを開く。"
+            "2 銘柄で重なる期間に合わせる。β はベンチマークに対するベータ。マスのダブルクリックで 2 銘柄、銘柄名のダブルクリックでその銘柄のチャートを開く。"
         )).pack(side="bottom", fill="x", padx=4, pady=4)
         self.note_var = tk.StringVar()
         ttk.Label(self, textvariable=self.note_var, foreground="#b25e00").pack(side="bottom", fill="x", padx=4)
@@ -1360,6 +1388,7 @@ class CorrelationView(ttk.Frame):
         self.show()
 
     def _open(self, a: str, b: str):
+        """マスなら 2 銘柄、銘柄名(a == b)ならその 1 銘柄のチャートを開く。"""
         self.app.open_chart(a)
         if b != a:
             self.app.open_chart(b)

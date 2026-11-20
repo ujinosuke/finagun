@@ -178,15 +178,27 @@ def remove_codes(group_name: str, codes) -> list[dict]:
 
 def move_code(group_name: str, code: str, step: int) -> list[dict]:
     """グループの中で、銘柄を上(step=-1)または下(step=1)に動かす(端では動かさない)。"""
+    return move_codes(group_name, [code], step)
+
+
+def move_codes(group_name: str, codes, step: int) -> list[dict]:
+    """グループの中で、いくつかの銘柄をまとめて 1 つ上(step=-1)または下(step=1)に動かす。
+
+    端に着いた銘柄は動かさない。その銘柄に続いて並んでいる選んだ銘柄も、追い越さずに止まる。
+    """
+    moving = set(codes)
+
     def change(groups):
         group = _find(groups, group_name)
-        if group is None or code not in group["codes"]:
+        if group is None:
             return
-        codes = group["codes"]
-        i = codes.index(code)
-        j = i + step
-        if 0 <= j < len(codes):
-            codes[i], codes[j] = codes[j], codes[i]
+        order = group["codes"]
+        # 動かす向きの先頭から順に、1 つ隣の「動かさない銘柄」と入れ替える
+        indexes = range(len(order)) if step < 0 else range(len(order) - 1, -1, -1)
+        for i in indexes:
+            j = i + step
+            if order[i] in moving and 0 <= j < len(order) and order[j] not in moving:
+                order[i], order[j] = order[j], order[i]
     return update_groups(change)
 
 
