@@ -7,6 +7,8 @@
     行に銘柄、列に 銘柄 / コード / 市場 / 株価 / 時価総額 と、次のグループの列を出す
     (表示するグループは「表示する列」のチェックで選ぶ。「値動き」は最初は隠している)。
         バリュエーション  EV/Rev / EV/EBITDA / PER(実績) / PER(予想) / PBR / PSR / 配当利回り(yfinance から取得)
+        財務              自己資本比率(yfinance の直近の四半期の貸借対照表から、自己資本 ÷ 総資産)
+                          / 営業利益率 / ROE(yfinance から取得。直近 12 か月)
         騰落率            1か月 / 3か月 / 6か月 / 1年
         トレンド          52週高値比 / 52週安値比 / 移動平均(25・75・200 日)からの乖離率
         値動き            RSI(14) / ボラティリティ(20・60 日、年率) / ATR(14)% / β(1年) / 売買代金(20 日平均)
@@ -14,7 +16,8 @@
     価格は終値だけを使う。例外は 52 週高値・安値(日中の高値・安値)と ATR(高値・安値・終値)。
     表の最後の 4 行は、指標の列ごとの High(最大)・Average(平均)・Median(中央値)・Low(最小)。
     バリュエーションの列は、マイナスの値(赤字の PER など)を計算から除き、一番高い値を赤い文字で出す。
-    テクニカルの列は、マイナスの値も含めて計算する(騰落率や乖離率のマイナスは意味のある値のため)。
+    財務・テクニカルの列は、マイナスの値も含めて計算する(債務超過や、騰落率・乖離率のマイナスは意味のある値のため)。
+    財務の列には赤い文字を付けない(どれも高いほど良いとされ、「一番高い = 割高」とは逆のため)。
 相関
     銘柄 × 銘柄の、日次の終値の前日比リターンの相関係数(+1 に近いほど青、-1 に近いほど赤)。
     2 銘柄ごとに、両方に値がある日だけでそろえて計算する。マスの下の数字は、計算に使った日数。
@@ -108,7 +111,9 @@ from gui_widgets import SortableTree, StockSearchBox
 
 APP_NAME = "fina_compare"
 COMPARE_PATH = BASE_DIR / "compare.json"
-FORMAT_VERSION = 3  # 3: グループは watchlist.json に持つ(2 は groups、1 は codes だけを compare.json に持っていた)
+# 4: 列のグループに「財務」を追加(前の版から移すときは表示する)
+# 3: グループは watchlist.json に持つ(2 は groups、1 は codes だけを compare.json に持っていた)
+FORMAT_VERSION = 4
 WORKERS = 4          # 指標・業績を同時に取得する銘柄数
 POLL_INTERVAL = 100  # 取得結果を画面に反映する間隔(ミリ秒)
 MISSING = "—"        # 値がないときの表示
@@ -128,6 +133,9 @@ COLUMNS = {
     "pbr": ("PBR", 70, "e"),
     "psr": ("PSR", 84, "e"),
     "dividend_yield": ("配当利回り", 92, "e"),
+    "equity_ratio": ("自己資本比率", 100, "e"),
+    "operating_margin": ("営業利益率", 92, "e"),
+    "roe": ("ROE", 70, "e"),
     "ret_1m": ("1か月", 76, "e"),
     "ret_3m": ("3か月", 76, "e"),
     "ret_6m": ("6か月", 76, "e"),
@@ -160,8 +168,19 @@ METRICS = {
     "psr": "priceToSalesTrailing12Months",
     "dividend_yield": "dividendYield",  # yfinance 1.x では % の値(2.92 なら 2.92%)
 }
+# 財務の列。集計の 4 行はマイナスも含めて出す。赤い文字は付けない
+# (どれも高いほど良いとされるので、「一番高い = 割高」の赤は合わない)
+FINANCE_COLUMNS = ["equity_ratio", "operating_margin", "roe"]
+# 財務の列のうち info から取る列(列の名前 -> info の項目名)。info は割合(0.0746)なので % に直す。
+# 自己資本比率は info にないので、貸借対照表から計算する(equity_ratio)
+FINANCE_INFO = {
+    "operating_margin": "operatingMargins",  # 営業利益率(直近 12 か月)
+    "roe": "returnOnEquity",                 # ROE(直近 12 か月の純利益 ÷ 自己資本)
+}
+# yfinance から取得して、集計の 4 行を出す列(バリュエーション + 財務)
+QUOTE_METRICS = [*METRICS, *FINANCE_COLUMNS]
 # テクニカルの列(保存済みの日足から計算する)。集計の 4 行はマイナスも含めて出す。赤い文字は付けない
-TECH_COLUMNS = list(COLUMNS)[len(BASE_COLUMNS) + len(METRICS):]
+TECH_COLUMNS = list(COLUMNS)[len(BASE_COLUMNS) + len(QUOTE_METRICS):]
 # 保有の列(保有資産のグループのときだけ出す)。列の名前 -> (見出し、幅、文字の寄せ方)
 HOLDING_COLUMNS = {
     "hold_qty": ("保有数", 80, "e"),
@@ -172,16 +191,18 @@ HOLDING_COLUMNS = {
 # 列のグループ(グループの名前 -> (表示名、列))
 COLUMN_GROUPS = {
     "valuation": ("バリュエーション", list(METRICS)),
+    "finance": ("財務", list(FINANCE_COLUMNS)),
     "returns": ("騰落率", ["ret_1m", "ret_3m", "ret_6m", "ret_1y"]),
     "trend": ("トレンド", ["high52", "low52", "dev25", "dev75", "dev200"]),
     "motion": ("値動き", ["rsi14", "vol20", "vol60", "atr14", "beta", "turnover20"]),
     "holding": ("保有", list(HOLDING_COLUMNS)),  # 保有資産のグループのときだけ
 }
-DEFAULT_GROUPS = ["valuation", "returns", "trend", "holding"]  # 「値動き」は最初は隠す
+DEFAULT_GROUPS = ["valuation", "finance", "returns", "trend", "holding"]  # 「値動き」は最初は隠す
 # 列 -> 用語の説明のキー(core_glossary.py。見出しにマウスを乗せると説明が出る)
 COLUMN_TERMS = {
     "market_cap": "market_cap", "ev_rev": "ev_rev", "ev_ebitda": "ev_ebitda", "per": "per",
     "forward_per": "forward_per", "pbr": "pbr", "psr": "psr", "dividend_yield": "dividend_yield",
+    "equity_ratio": "equity_ratio", "operating_margin": "operating_margin_ttm", "roe": "roe",
     "ret_1m": "returns", "ret_3m": "returns", "ret_6m": "returns", "ret_1y": "returns",
     "high52": "high52", "low52": "low52", "dev25": "deviation", "dev75": "deviation", "dev200": "deviation",
     "rsi14": "rsi", "vol20": "volatility", "vol60": "volatility", "atr14": "atr", "beta": "beta",
@@ -194,7 +215,7 @@ HOLDINGS_GROUP = RESERVED_NAMES[0]  # 固定のグループの名前「保有資
 HOLDINGS_LABEL = "保有資産(自動)"   # グループの欄での表示
 LEGACY_GROUP_NAME = "比較リスト"    # 前の版(グループのない版)の銘柄を入れるグループ
 SIGNED_PERCENT = {"ret_1m", "ret_3m", "ret_6m", "ret_1y", "dev25", "dev75", "dev200"}  # +1.23% の形
-PERCENT = {"high52", "low52", "vol20", "vol60", "atr14"}                               # 1.23% の形
+PERCENT = {"high52", "low52", "vol20", "vol60", "atr14", *FINANCE_COLUMNS}             # 1.23% の形
 # 集計の行(行の名前 -> 計算のしかた)
 SUMMARIES = {
     "High": max,
@@ -239,6 +260,7 @@ EXCEL_FORMATS = {
     "pbr": ("#,##0.00", 9),
     "psr": ("#,##0.00", 10),
     "dividend_yield": ("0.00%", 12),
+    "equity_ratio": ("0.0%", 13), "operating_margin": ("0.0%", 11), "roe": ("0.0%", 9),
     **{c: ("+0.00%;-0.00%;0.00%", 10) for c in SIGNED_PERCENT},
     "high52": ("0.0%", 12), "low52": ("0.0%", 12),
     "rsi14": ("0.0", 9), "vol20": ("0.0%", 10), "vol60": ("0.0%", 10), "atr14": ("0.00%", 10),
@@ -289,10 +311,34 @@ def to_number(value) -> float | None:
     return number if math.isfinite(number) else None
 
 
+# 自己資本比率の計算に使う貸借対照表の行(上から順に、値のある行を使う)
+EQUITY_ROWS = ["Stockholders Equity", "Common Stock Equity"]  # 自己資本(親会社の株主の持ち分)
+ASSETS_ROW = "Total Assets"                                   # 総資産
+
+
+def equity_ratio(ticker) -> float | None:
+    """自己資本比率(%) = 自己資本 ÷ 総資産。直近の四半期の貸借対照表、なければ年次を使う。取れなければ None。"""
+    for attribute in ("quarterly_balance_sheet", "balance_sheet"):
+        try:
+            sheet = getattr(ticker, attribute)
+        except Exception:  # noqa: BLE001  取れなくても、ほかの指標は出す
+            continue
+        if sheet is None or sheet.empty or ASSETS_ROW not in sheet.index:
+            continue
+        for end in sorted(sheet.columns, reverse=True):  # 新しい期から
+            equity = next((v for row in EQUITY_ROWS if row in sheet.index
+                           and (v := to_number(sheet.at[row, end])) is not None), None)
+            assets = to_number(sheet.at[ASSETS_ROW, end])
+            if equity is not None and assets is not None and assets > 0:
+                return equity / assets * 100
+    return None
+
+
 def fetch_quote(code: str) -> Quote:
     """yfinance から 1 銘柄の株価と指標を取得する(取得用のスレッドで動く)。"""
+    ticker = yf.Ticker(f"{code}.T")
     try:
-        info = yf.Ticker(f"{code}.T").info
+        info = ticker.info
     except Exception as e:  # noqa: BLE001  通信の失敗など。画面に出すだけにする
         return Quote(error=f"{type(e).__name__}: {e}")
     if not info:
@@ -303,6 +349,10 @@ def fetch_quote(code: str) -> Quote:
     if all(v is None for v in values.values()):
         # 存在しないコードでも、info は空にならず中身のない値が返る
         return Quote(error="Yahoo にデータがありません")
+    for column, key in FINANCE_INFO.items():
+        ratio = to_number(info.get(key))
+        values[column] = None if ratio is None else ratio * 100
+    values["equity_ratio"] = equity_ratio(ticker)
     return Quote(
         values=values,
         long_name=info.get("longName") or info.get("shortName") or "",
@@ -454,6 +504,8 @@ def read_compare() -> dict:
     if isinstance(groups, list):
         if data.get("version", 1) < 2:  # 前の版には「保有」の列がなかったので、最初は表示する
             groups = [*groups, "holding"]
+        if data.get("version", 1) < 4:  # 前の版には「財務」の列がなかったので、最初は表示する
+            groups = [*groups, "finance"]
         state["column_groups"] = [g for g in COLUMN_GROUPS if g in groups]
     # 前の版は compare.json にベンチマーク・相関の期間を持っていた。settings.json がまだなければ引き継ぐ
     if not settings_exist() and ("benchmark" in data or "corr_period" in data):
@@ -1181,7 +1233,7 @@ class TableView(ttk.Frame):
 
     def _row(self, code: str) -> tuple[str, ...]:
         quote = self.app.quotes.get(code)
-        columns = (*FIELDS, *METRICS)
+        columns = (*FIELDS, *QUOTE_METRICS)
         if quote is None:
             numbers = ["取得中…"] + [""] * (len(columns) - 1)
         elif quote.error:
@@ -1209,10 +1261,10 @@ class TableView(ttk.Frame):
         """集計に使う値(列の名前 -> 値の一覧)。
 
         バリュエーションの列は、マイナスの値(赤字の PER、EBITDA が赤字の EV/EBITDA など)を除く
-        (倍率として比べられないため)。テクニカルの列は、マイナスの値も含める。
+        (倍率として比べられないため)。財務・テクニカルの列は、マイナスの値(債務超過など)も含める。
         """
         values = {}
-        for column in (*METRICS, *TECH_COLUMNS):
+        for column in (*QUOTE_METRICS, *TECH_COLUMNS):
             numbers = [v for c in self.app.codes if (v := self.app.value(c, column)) is not None]
             values[column] = [v for v in numbers if v >= 0] if column in METRICS else numbers
         return values
@@ -1222,7 +1274,8 @@ class TableView(ttk.Frame):
         values = self.summary_values()
         rows = {}
         for label, function in SUMMARIES.items():
-            cells = [format_value(c, function(values[c]) if values[c] else None) for c in (*METRICS, *TECH_COLUMNS)]
+            cells = [format_value(c, function(values[c]) if values[c] else None)
+                     for c in (*QUOTE_METRICS, *TECH_COLUMNS)]
             rows[label] = (label, "", "", *[""] * len(FIELDS), *cells, *[""] * len(HOLDING_COLUMNS))
         return rows
 
